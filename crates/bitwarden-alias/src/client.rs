@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use url::Url;
 
 use crate::{
-    Alias, AliasCreationOptions, AliasDomain, AliasError, AliasId, AliasPage, AliasState,
-    ContactId, ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain,
-    CustomDomainId, DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox,
-    ReverseAlias, ReverseAliasPage, SearchAliasesRequest, UpdateAliasRequest,
+    Alias, AliasCreationOptions, AliasDomain, AliasError, AliasId, AliasPage, AliasRecommendation,
+    AliasState, ContactId, ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest,
+    CustomDomain, CustomDomainId, DeleteAliasResult, DeleteContactResult, ListAliasesRequest,
+    Mailbox, ReverseAlias, ReverseAliasPage, SearchAliasesRequest, UpdateAliasRequest,
     UpdateCustomDomainRequest,
 };
 
@@ -160,6 +160,14 @@ impl AliasClient {
         self.send_json(builder).await
     }
 
+    /// Gets the most recently associated alias for a hostname, when SimpleLogin recommends one.
+    pub async fn get_alias_recommendation(
+        &self,
+        hostname: &SensitiveString,
+    ) -> Result<Option<AliasRecommendation>, AliasError> {
+        Ok(self.get_alias_options(Some(hostname)).await?.recommendation)
+    }
+
     /// Lists a page of aliases, optionally filtered by lifecycle state.
     pub async fn list_aliases(&self, request: ListAliasesRequest) -> Result<AliasPage, AliasError> {
         let builder = self.alias_list_request(Method::GET, request.page, request.filter)?;
@@ -244,6 +252,16 @@ impl AliasClient {
         })
     }
 
+    /// Enables an alias if it is disabled.
+    pub async fn enable_alias(&self, alias_id: AliasId) -> Result<AliasState, AliasError> {
+        self.set_alias_enabled(alias_id, true).await
+    }
+
+    /// Disables an alias if it is enabled.
+    pub async fn disable_alias(&self, alias_id: AliasId) -> Result<AliasState, AliasError> {
+        self.set_alias_enabled(alias_id, false).await
+    }
+
     /// Deletes an alias.
     pub async fn delete_alias(&self, alias_id: AliasId) -> Result<DeleteAliasResult, AliasError> {
         let builder = self.request(Method::DELETE, &format!("api/aliases/{alias_id}"))?;
@@ -309,6 +327,15 @@ impl AliasClient {
         })
     }
 
+    /// Lists contacts for an alias. Each contact includes its reverse alias.
+    pub async fn list_contacts(
+        &self,
+        alias_id: AliasId,
+        page: u32,
+    ) -> Result<ReverseAliasPage, AliasError> {
+        self.list_reverse_aliases(alias_id, page).await
+    }
+
     /// Creates or retrieves the reverse alias for a contact.
     pub async fn create_reverse_alias(
         &self,
@@ -323,6 +350,15 @@ impl AliasClient {
             .request(Method::POST, &format!("api/aliases/{alias_id}/contacts"))?
             .json(&Body { contact: &contact });
         self.send_json(builder).await
+    }
+
+    /// Creates a contact and returns the reverse alias assigned to it.
+    pub async fn create_contact(
+        &self,
+        alias_id: AliasId,
+        contact: SensitiveString,
+    ) -> Result<ReverseAlias, AliasError> {
+        self.create_reverse_alias(alias_id, contact).await
     }
 
     /// Toggles whether a contact is blocked and returns the provider's resulting state.
@@ -472,6 +508,9 @@ fn validate_base_url(value: &str) -> Result<Url, AliasError> {
 }
 
 fn validate_token(token: &SensitiveString) -> Result<(), AliasError> {
+    if token.expose().is_empty() {
+        return Err(AliasError::InvalidAuthenticationToken);
+    }
     let mut value = HeaderValue::from_str(token.expose())
         .map_err(|_| AliasError::InvalidAuthenticationToken)?;
     value.set_sensitive(true);
@@ -483,9 +522,8 @@ fn is_json_content_type(value: Option<&HeaderValue>) -> bool {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
         .map(str::trim)
-        .is_some_and(|value| {
-            value.eq_ignore_ascii_case("application/json") || value.ends_with("+json")
-        })
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|value| value == "application/json" || value.ends_with("+json"))
 }
 
 async fn read_bounded(
@@ -531,10 +569,12 @@ fn render_provider_error(body: &[u8], token: &str) -> String {
     let mut rendered = String::with_capacity(redacted.len().min(MAX_RENDERED_ERROR_CHARS));
     let mut previous_was_space = false;
     for character in redacted.chars().take(MAX_RENDERED_ERROR_CHARS) {
-        let character = if character.is_control() {
-            ' '
-        } else {
-            character
+        let character = match character {
+            '<' => '[',
+            '>' => ']',
+            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => continue,
+            character if character.is_control() => ' ',
+            character => character,
         };
         if character.is_whitespace() {
             if !previous_was_space {
