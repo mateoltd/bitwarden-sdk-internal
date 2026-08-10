@@ -34,7 +34,11 @@ liveTest(
     const unique = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const hostname = `wasm-${unique}.integration.test`;
     const searchText = `wasm-live-${unique}`;
-    const client = new AliasClient({ base_url: baseUrl!, api_token: sensitive(apiToken!) });
+    const client = new AliasClient({
+      base_url: baseUrl!,
+      api_token: sensitive(apiToken!),
+      connection_id: "11111111-1111-4111-8111-111111111111",
+    });
     const aliasIds: AliasId[] = [];
     let contactId: ContactId | undefined;
 

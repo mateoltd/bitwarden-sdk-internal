@@ -7,12 +7,19 @@ use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_vault::{CipherId, CipherType, CipherView, FieldType, FieldView};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "wasm")]
+use tsify::Tsify;
 use url::Url;
+use uuid::{Uuid, Variant, Version};
 
 use crate::{Alias, AliasId};
 
 /// Current schema version stored in vault alias-reference fields.
-pub const ALIAS_REFERENCE_VERSION: u32 = 1;
+pub const ALIAS_REFERENCE_VERSION: u32 = 2;
+
+/// Previous reference schema version. Version 1 did not identify a provider account and must be
+/// migrated explicitly before it can select a connection.
+pub const LEGACY_ALIAS_REFERENCE_VERSION: u32 = 1;
 
 /// Reserved hidden-field name used to persist alias identity inside an encrypted vault cipher.
 pub const ALIAS_REFERENCE_FIELD_NAME: &str = "bitwarden.alias.reference";
@@ -20,6 +27,8 @@ pub const ALIAS_REFERENCE_FIELD_NAME: &str = "bitwarden.alias.reference";
 const MAX_ALIAS_REFERENCE_BYTES: usize = 4 * 1024;
 
 /// Alias provider represented by a vault reference.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum AliasProvider {
     /// SimpleLogin, hosted or self-hosted.
@@ -27,10 +36,13 @@ pub enum AliasProvider {
     SimpleLogin,
 }
 
-/// A provider plus its concrete service instance.
+/// A provider connection selected by a stable client-supplied opaque identifier.
 ///
-/// The instance is part of stable identity because numeric alias identifiers can overlap between
-/// hosted and self-hosted SimpleLogin installations.
+/// `instance` distinguishes hosted and self-hosted services. `connection_id` distinguishes
+/// accounts on the same service. A connection identifier must be a canonical UUID v4 and
+/// must never be derived from or contain a credential.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
 #[derive(Clone, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AliasProviderIdentity {
@@ -38,6 +50,8 @@ pub struct AliasProviderIdentity {
     pub provider: AliasProvider,
     /// Canonical service base URL, including a trailing slash.
     pub instance: String,
+    /// Canonical UUID v4 generated and persisted by the consuming client.
+    pub connection_id: String,
 }
 
 impl fmt::Debug for AliasProviderIdentity {
@@ -46,22 +60,28 @@ impl fmt::Debug for AliasProviderIdentity {
             .debug_struct("AliasProviderIdentity")
             .field("provider", &self.provider)
             .field("instance", &"[REDACTED]")
+            .field("connection_id", &self.connection_id)
             .finish()
     }
 }
 
 impl AliasProviderIdentity {
-    /// Creates a canonical SimpleLogin provider identity.
-    pub fn simplelogin(base_url: &str) -> Result<Self, AliasReferenceError> {
+    /// Creates a canonical SimpleLogin connection identity.
+    pub fn simplelogin(base_url: &str, connection_id: &str) -> Result<Self, AliasReferenceError> {
         let url = canonical_provider_url(base_url)?;
-        Ok(Self::from_simplelogin_url(&url))
+        Self::from_simplelogin_url(&url, connection_id)
     }
 
-    pub(crate) fn from_simplelogin_url(url: &Url) -> Self {
-        Self {
+    pub(crate) fn from_simplelogin_url(
+        url: &Url,
+        connection_id: &str,
+    ) -> Result<Self, AliasReferenceError> {
+        validate_connection_id(connection_id)?;
+        Ok(Self {
             provider: AliasProvider::SimpleLogin,
             instance: url.as_str().to_owned(),
-        }
+            connection_id: connection_id.to_owned(),
+        })
     }
 
     fn validate(&self) -> Result<(), AliasReferenceError> {
@@ -71,6 +91,7 @@ impl AliasProviderIdentity {
                 "provider instance must be canonical",
             ));
         }
+        validate_connection_id(&self.connection_id)?;
         Ok(())
     }
 }
@@ -78,6 +99,12 @@ impl AliasProviderIdentity {
 /// Versioned stable reference persisted in a vault cipher.
 ///
 /// The address is a last-known snapshot. Provider and numeric identifier are authoritative.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AliasReference {
@@ -87,6 +114,8 @@ pub struct AliasReference {
     pub provider: AliasProvider,
     /// Canonical provider instance URL.
     pub provider_instance: String,
+    /// Stable client-supplied provider connection identity.
+    pub connection_id: String,
     /// Stable provider-assigned alias identifier.
     pub alias_id: AliasId,
     /// Last address observed for the alias.
@@ -100,6 +129,7 @@ impl fmt::Debug for AliasReference {
             .field("version", &self.version)
             .field("provider", &self.provider)
             .field("provider_instance", &"[REDACTED]")
+            .field("connection_id", &self.connection_id)
             .field("alias_id", &self.alias_id)
             .field("address", &self.address)
             .finish()
@@ -108,14 +138,21 @@ impl fmt::Debug for AliasReference {
 
 impl AliasReference {
     /// Creates a current-version reference from real provider lifecycle data.
-    pub fn new(identity: &AliasProviderIdentity, alias: &Alias) -> Self {
-        Self {
+    pub fn new(
+        identity: &AliasProviderIdentity,
+        alias: &Alias,
+    ) -> Result<Self, AliasReferenceError> {
+        identity.validate()?;
+        let reference = Self {
             version: ALIAS_REFERENCE_VERSION,
             provider: identity.provider,
             provider_instance: identity.instance.clone(),
+            connection_id: identity.connection_id.clone(),
             alias_id: alias.id,
             address: SensitiveString::from(provider_alias_address(alias).to_owned()),
-        }
+        };
+        reference.validate()?;
+        Ok(reference)
     }
 
     /// Returns the provider identity namespacing this reference.
@@ -123,6 +160,7 @@ impl AliasReference {
         AliasProviderIdentity {
             provider: self.provider,
             instance: self.provider_instance.clone(),
+            connection_id: self.connection_id.clone(),
         }
     }
 
@@ -140,23 +178,13 @@ impl AliasReference {
 
     /// Decodes and validates an encrypted vault-field value.
     pub fn decode(value: &str) -> Result<Self, AliasReferenceError> {
-        if value.len() > MAX_ALIAS_REFERENCE_BYTES {
-            return Err(AliasReferenceError::TooLarge {
-                limit_bytes: MAX_ALIAS_REFERENCE_BYTES,
-            });
+        ensure_reference_size(value)?;
+        let version = reference_version(value)?;
+        if version == LEGACY_ALIAS_REFERENCE_VERSION {
+            return Err(AliasReferenceError::LegacyReferenceRequiresMigration);
         }
-
-        #[derive(Deserialize)]
-        struct VersionEnvelope {
-            version: u32,
-        }
-
-        let envelope: VersionEnvelope =
-            serde_json::from_str(value).map_err(|_| AliasReferenceError::Malformed)?;
-        if envelope.version != ALIAS_REFERENCE_VERSION {
-            return Err(AliasReferenceError::UnsupportedVersion {
-                version: envelope.version,
-            });
+        if version != ALIAS_REFERENCE_VERSION {
+            return Err(AliasReferenceError::UnsupportedVersion { version });
         }
         let reference: Self =
             serde_json::from_str(value).map_err(|_| AliasReferenceError::Malformed)?;
@@ -164,27 +192,105 @@ impl AliasReference {
         Ok(reference)
     }
 
+    /// Migrates a serialized version 1 reference using the caller's available connections.
+    ///
+    /// Migration is idempotent for version 2. A version 1 reference is migrated only when exactly
+    /// one supplied connection matches its provider and canonical instance. Passing every
+    /// available connection therefore rejects same-instance multi-account ambiguity; a client may
+    /// instead pass one connection after an explicit user selection.
+    pub fn migrate(
+        value: &str,
+        connections: &[AliasProviderIdentity],
+    ) -> Result<Self, AliasReferenceError> {
+        ensure_reference_size(value)?;
+        let version = reference_version(value)?;
+        if version == ALIAS_REFERENCE_VERSION {
+            return Self::decode(value);
+        }
+        if version != LEGACY_ALIAS_REFERENCE_VERSION {
+            return Err(AliasReferenceError::UnsupportedVersion { version });
+        }
+
+        let legacy: LegacyAliasReference =
+            serde_json::from_str(value).map_err(|_| AliasReferenceError::Malformed)?;
+        legacy.validate()?;
+
+        let mut unique_connections = HashSet::with_capacity(connections.len());
+        let mut matches = Vec::new();
+        for connection in connections {
+            connection.validate()?;
+            if !unique_connections.insert(connection.clone()) {
+                return Err(AliasReferenceError::DuplicateConnectionIdentity);
+            }
+            if connection.provider == legacy.provider
+                && connection.instance == legacy.provider_instance
+            {
+                matches.push(connection);
+            }
+        }
+
+        let connection = match matches.as_slice() {
+            [] => return Err(AliasReferenceError::LegacyConnectionNotFound),
+            [connection] => *connection,
+            _ => return Err(AliasReferenceError::AmbiguousLegacyReference),
+        };
+        let reference = Self {
+            version: ALIAS_REFERENCE_VERSION,
+            provider: legacy.provider,
+            provider_instance: legacy.provider_instance,
+            connection_id: connection.connection_id.clone(),
+            alias_id: legacy.alias_id,
+            address: legacy.address,
+        };
+        reference.validate()?;
+        Ok(reference)
+    }
+
     /// Reads the single reserved reference field from a decrypted vault cipher.
     pub fn from_cipher(cipher: &CipherView) -> Result<Option<Self>, AliasReferenceError> {
-        let mut references = cipher
-            .fields
-            .iter()
-            .flatten()
-            .filter(|field| field.name.as_deref() == Some(ALIAS_REFERENCE_FIELD_NAME));
-        let Some(field) = references.next() else {
+        let Some(field) = reserved_reference_field(cipher)? else {
             return Ok(None);
         };
-        if references.next().is_some() {
-            return Err(AliasReferenceError::DuplicateFields);
-        }
-        if field.r#type != FieldType::Hidden {
-            return Err(AliasReferenceError::FieldMustBeHidden);
-        }
         let value = field
             .value
             .as_deref()
             .ok_or(AliasReferenceError::MissingValue)?;
         Self::decode(value).map(Some)
+    }
+
+    /// Explicitly migrates and canonicalizes the reserved encrypted field on a login cipher.
+    pub fn migrate_cipher(
+        cipher: &mut CipherView,
+        connections: &[AliasProviderIdentity],
+    ) -> Result<AliasReferenceMigrationResult, AliasReferenceError> {
+        let Some(field) = reserved_reference_field(cipher)? else {
+            return Ok(AliasReferenceMigrationResult {
+                reference: None,
+                changed: false,
+            });
+        };
+        if cipher.r#type != CipherType::Login || cipher.login.is_none() {
+            return Err(AliasReferenceError::NotLoginCipher);
+        }
+        let value = field
+            .value
+            .as_deref()
+            .ok_or(AliasReferenceError::MissingValue)?;
+        let reference = Self::migrate(value, connections)?;
+        let encoded = reference.encode()?.expose_owned();
+
+        let fields = cipher.fields.as_mut().expect("reserved field must exist");
+        let field = fields
+            .iter_mut()
+            .find(|field| field.name.as_deref() == Some(ALIAS_REFERENCE_FIELD_NAME))
+            .expect("reserved field must exist");
+        let changed = field.value.as_deref() != Some(encoded.as_str()) || field.linked_id.is_some();
+        field.value = Some(encoded);
+        field.linked_id = None;
+        Ok(AliasReferenceMigrationResult {
+            reference: Some(reference),
+            changed,
+        })
     }
 
     /// Attaches this reference to a login cipher and synchronizes its username.
@@ -210,34 +316,136 @@ impl AliasReference {
                 version: self.version,
             });
         }
-        if self.alias_id.0 == 0 {
-            return Err(AliasReferenceError::InvalidValue(
-                "alias identifier must be non-zero",
-            ));
-        }
-        // EXPOSE: validation only checks whether the sensitive address is empty and never renders
-        // or logs it.
-        if self.address.expose().is_empty() {
-            return Err(AliasReferenceError::InvalidValue(
-                "alias address must not be empty",
-            ));
-        }
-        let canonical = canonical_provider_url(&self.provider_instance)?;
-        if canonical.as_str() != self.provider_instance {
-            return Err(AliasReferenceError::InvalidValue(
-                "provider instance must be canonical",
-            ));
-        }
-        Ok(())
+        validate_connection_id(&self.connection_id)?;
+        validate_reference_values(self.alias_id, &self.address, &self.provider_instance)
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyAliasReference {
+    version: u32,
+    provider: AliasProvider,
+    provider_instance: String,
+    alias_id: AliasId,
+    address: SensitiveString,
+}
+
+impl LegacyAliasReference {
+    fn validate(&self) -> Result<(), AliasReferenceError> {
+        if self.version != LEGACY_ALIAS_REFERENCE_VERSION {
+            return Err(AliasReferenceError::UnsupportedVersion {
+                version: self.version,
+            });
+        }
+        validate_reference_values(self.alias_id, &self.address, &self.provider_instance)
+    }
+}
+
+/// Result of explicitly migrating a cipher's reserved encrypted reference field.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AliasReferenceMigrationResult {
+    /// Parsed current reference, or `None` when the cipher has no reserved field.
+    pub reference: Option<AliasReference>,
+    /// Whether the reserved field was rewritten from version 1 to version 2.
+    pub changed: bool,
+}
+
+/// A binding operation's updated decrypted cipher.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AliasCipherMutationResult {
+    /// Updated cipher value. The caller must use the normal vault encryption and persistence path.
+    pub cipher: CipherView,
+    /// Whether the operation changed the cipher.
+    pub changed: bool,
+}
+
+/// A migration operation's updated cipher and parsed current reference.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AliasCipherMigrationOutput {
+    /// Updated cipher value. The caller must use the normal vault encryption and persistence path.
+    pub cipher: CipherView,
+    /// Parsed migration outcome.
+    pub migration: AliasReferenceMigrationResult,
+}
+
+/// Creates and canonically serializes a current alias reference.
+pub fn create_alias_reference(
+    identity: &AliasProviderIdentity,
+    alias: &Alias,
+) -> Result<SensitiveString, AliasReferenceError> {
+    AliasReference::new(identity, alias)?.encode()
+}
+
+/// Canonically serializes a parsed current alias reference.
+pub fn serialize_alias_reference(
+    reference: &AliasReference,
+) -> Result<SensitiveString, AliasReferenceError> {
+    reference.encode()
+}
+
+/// Parses a current alias reference. Version 1 requires explicit migration.
+pub fn parse_alias_reference(value: &str) -> Result<AliasReference, AliasReferenceError> {
+    AliasReference::decode(value)
+}
+
+/// Parses and binds a canonical reference to a decrypted login cipher.
+pub fn bind_alias_reference(
+    value: &str,
+    mut cipher: CipherView,
+) -> Result<AliasCipherMutationResult, AliasReferenceError> {
+    let reference = AliasReference::decode(value)?;
+    let changed = reference.bind_to_cipher(&mut cipher)?;
+    Ok(AliasCipherMutationResult { cipher, changed })
+}
+
+/// Explicitly migrates and canonically serializes a version 1 reference.
+pub fn migrate_alias_reference(
+    value: &str,
+    connections: &[AliasProviderIdentity],
+) -> Result<SensitiveString, AliasReferenceError> {
+    AliasReference::migrate(value, connections)?.encode()
+}
+
+/// Explicitly migrates the reserved encrypted field on a decrypted login cipher.
+pub fn migrate_cipher_alias_reference(
+    mut cipher: CipherView,
+    connections: &[AliasProviderIdentity],
+) -> Result<AliasCipherMigrationOutput, AliasReferenceError> {
+    let migration = AliasReference::migrate_cipher(&mut cipher, connections)?;
+    Ok(AliasCipherMigrationOutput { cipher, migration })
+}
+
 /// Safe failures while parsing or attaching a vault alias reference.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Error), uniffi(flat_error))]
 #[derive(Debug, Error)]
 pub enum AliasReferenceError {
     /// Provider instance is not a safe HTTP(S) base URL.
     #[error("invalid alias provider instance: {0}")]
     InvalidProviderInstance(&'static str),
+    /// Connection identity is not a canonical UUID v4.
+    #[error("invalid alias connection identity: {0}")]
+    InvalidConnectionIdentity(&'static str),
+    /// Reference operations require settings tied to a stable connection identity.
+    #[error("alias provider connection identity is required")]
+    MissingConnectionIdentity,
     /// Encoded reference exceeded its strict bound.
     #[error("alias reference exceeded the {limit_bytes}-byte limit")]
     TooLarge {
@@ -253,6 +461,18 @@ pub enum AliasReferenceError {
         /// Unsupported version number.
         version: u32,
     },
+    /// A version 1 reference cannot select an account and requires explicit migration.
+    #[error("legacy alias reference requires explicit connection migration")]
+    LegacyReferenceRequiresMigration,
+    /// No supplied connection matched a legacy reference's provider instance.
+    #[error("no provider connection matches the legacy alias reference")]
+    LegacyConnectionNotFound,
+    /// Multiple supplied accounts share the legacy reference's provider instance.
+    #[error("legacy alias reference matches multiple provider connections")]
+    AmbiguousLegacyReference,
+    /// The migration candidate set repeated one connection identity.
+    #[error("migration input contains a duplicate provider connection identity")]
+    DuplicateConnectionIdentity,
     /// The reserved reference field appeared more than once.
     #[error("vault cipher contains duplicate alias reference fields")]
     DuplicateFields,
@@ -273,7 +493,18 @@ pub enum AliasReferenceError {
     EncodingFailed,
 }
 
+#[cfg(feature = "wasm")]
+impl From<AliasReferenceError> for wasm_bindgen::JsValue {
+    fn from(error: AliasReferenceError) -> Self {
+        let js_error = js_sys::Error::new(&error.to_string());
+        js_error.set_name("AliasReferenceError");
+        js_error.into()
+    }
+}
+
 /// Reason a cipher could not participate in reconciliation.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AliasReconciliationSkipReason {
@@ -291,7 +522,9 @@ pub enum AliasReconciliationSkipReason {
     MalformedReference,
     /// The reference version is not supported.
     UnsupportedReferenceVersion,
-    /// The reference belongs to another provider or provider instance.
+    /// A version 1 reference must be assigned to one connection before reconciliation.
+    LegacyReferenceRequiresMigration,
+    /// The reference belongs to another provider, instance, or connection.
     ForeignProvider,
     /// The reference was attached to a non-login cipher.
     NonLoginCipher,
@@ -300,6 +533,12 @@ pub enum AliasReconciliationSkipReason {
 }
 
 /// One observed reconciliation result.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", tag = "status")]
 pub enum AliasReconciliationOutcome {
@@ -357,6 +596,12 @@ pub enum AliasReconciliationOutcome {
 }
 
 /// Explicit mutation proposed by a dry-run plan.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", tag = "action")]
 pub enum AliasReconciliationAction {
@@ -395,28 +640,40 @@ impl AliasReconciliationAction {
 }
 
 /// Counts summarizing a reconciliation dry run.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AliasReconciliationSummary {
     /// Exact stable matches.
-    pub matched: usize,
+    pub matched: u64,
     /// Legacy address matches awaiting stable binding.
-    pub matched_by_address: usize,
+    pub matched_by_address: u64,
     /// Stale bindings awaiting refresh.
-    pub stale_bindings: usize,
+    pub stale_bindings: u64,
     /// Ambiguous duplicate binding groups.
-    pub duplicate_bindings: usize,
+    pub duplicate_bindings: u64,
     /// References whose provider alias is missing.
-    pub missing_aliases: usize,
+    pub missing_aliases: u64,
     /// Provider aliases with no vault match.
-    pub unbound_aliases: usize,
+    pub unbound_aliases: u64,
     /// Ciphers deliberately skipped for safety.
-    pub skipped_ciphers: usize,
+    pub skipped_ciphers: u64,
     /// Explicit safe repairs proposed.
-    pub proposed_repairs: usize,
+    pub proposed_repairs: u64,
 }
 
 /// Immutable dry-run output. No cipher changes occur until [`apply_alias_reconciliation`] is called.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AliasReconciliationPlan {
@@ -431,16 +688,35 @@ pub struct AliasReconciliationPlan {
 }
 
 /// Result of explicitly applying a reconciliation plan.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AliasReconciliationApplyResult {
     /// Ciphers changed by this invocation.
     pub changed_cipher_ids: Vec<CipherId>,
     /// Planned actions already satisfied, including repeated idempotent application.
-    pub unchanged_actions: usize,
+    pub unchanged_actions: u64,
+}
+
+/// Binding-friendly reconciliation apply output containing the updated ciphers.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AliasReconciliationApplyOutput {
+    /// Updated decrypted ciphers. The caller owns normal encryption and persistence.
+    pub ciphers: Vec<CipherView>,
+    /// Apply summary.
+    pub result: AliasReconciliationApplyResult,
 }
 
 /// Safe reconciliation failures. Addresses and reference payloads are never rendered.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Error), uniffi(flat_error))]
 #[derive(Debug, Error)]
 pub enum AliasReconciliationError {
     /// Provider data repeated an identifier and is not safe to reconcile.
@@ -478,6 +754,15 @@ pub enum AliasReconciliationError {
     Reference(#[from] AliasReferenceError),
 }
 
+#[cfg(feature = "wasm")]
+impl From<AliasReconciliationError> for wasm_bindgen::JsValue {
+    fn from(error: AliasReconciliationError) -> Self {
+        let js_error = js_sys::Error::new(&error.to_string());
+        js_error.set_name("AliasReconciliationError");
+        js_error.into()
+    }
+}
+
 enum ClaimSource {
     Reference(AliasReference),
     Address,
@@ -503,7 +788,7 @@ pub fn plan_alias_reconciliation(
     for alias in aliases {
         // Validate every provider object up front so a dry run never proposes an action that
         // could fail reference encoding during explicit apply.
-        let _encoded = AliasReference::new(provider, alias).encode()?;
+        let _encoded = AliasReference::new(provider, alias)?.encode()?;
     }
     let alias_index = index_aliases(aliases)?;
     validate_cipher_ids(ciphers)?;
@@ -729,7 +1014,7 @@ pub fn apply_alias_reconciliation(
             ));
         }
 
-        let desired = AliasReference::new(&plan.provider, alias);
+        let desired = AliasReference::new(&plan.provider, alias)?;
         let current_reference = AliasReference::from_cipher(cipher)?;
         let already_satisfied = current_reference.as_ref() == Some(&desired)
             && cipher
@@ -802,6 +1087,16 @@ pub fn apply_alias_reconciliation(
     })
 }
 
+/// Applies reconciliation to owned cipher values for WASM and UniFFI consumers.
+pub fn apply_alias_reconciliation_owned(
+    plan: &AliasReconciliationPlan,
+    aliases: &[Alias],
+    mut ciphers: Vec<CipherView>,
+) -> Result<AliasReconciliationApplyOutput, AliasReconciliationError> {
+    let result = apply_alias_reconciliation(plan, aliases, &mut ciphers)?;
+    Ok(AliasReconciliationApplyOutput { ciphers, result })
+}
+
 fn canonical_provider_url(value: &str) -> Result<Url, AliasReferenceError> {
     let mut url = Url::parse(value)
         .map_err(|_| AliasReferenceError::InvalidProviderInstance("URL cannot be parsed"))?;
@@ -831,6 +1126,93 @@ fn canonical_provider_url(value: &str) -> Result<Url, AliasReferenceError> {
         url.set_path(&path);
     }
     Ok(url)
+}
+
+fn validate_connection_id(value: &str) -> Result<(), AliasReferenceError> {
+    if value.len() != 36 {
+        return Err(AliasReferenceError::InvalidConnectionIdentity(
+            "must be a canonical UUID",
+        ));
+    }
+    let id = Uuid::parse_str(value)
+        .map_err(|_| AliasReferenceError::InvalidConnectionIdentity("must be a canonical UUID"))?;
+    if id.get_version() != Some(Version::Random) || id.get_variant() != Variant::RFC4122 {
+        return Err(AliasReferenceError::InvalidConnectionIdentity(
+            "must be an RFC 4122 UUID v4",
+        ));
+    }
+    if id.hyphenated().to_string() != value {
+        return Err(AliasReferenceError::InvalidConnectionIdentity(
+            "must use lowercase hyphenated UUID form",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_reference_values(
+    alias_id: AliasId,
+    address: &SensitiveString,
+    provider_instance: &str,
+) -> Result<(), AliasReferenceError> {
+    if alias_id.0 == 0 {
+        return Err(AliasReferenceError::InvalidValue(
+            "alias identifier must be non-zero",
+        ));
+    }
+    // EXPOSE: validation only checks whether the sensitive address is empty and never renders or
+    // logs it.
+    if address.expose().is_empty() {
+        return Err(AliasReferenceError::InvalidValue(
+            "alias address must not be empty",
+        ));
+    }
+    let canonical = canonical_provider_url(provider_instance)?;
+    if canonical.as_str() != provider_instance {
+        return Err(AliasReferenceError::InvalidValue(
+            "provider instance must be canonical",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_reference_size(value: &str) -> Result<(), AliasReferenceError> {
+    if value.len() > MAX_ALIAS_REFERENCE_BYTES {
+        return Err(AliasReferenceError::TooLarge {
+            limit_bytes: MAX_ALIAS_REFERENCE_BYTES,
+        });
+    }
+    Ok(())
+}
+
+fn reference_version(value: &str) -> Result<u32, AliasReferenceError> {
+    #[derive(Deserialize)]
+    struct VersionEnvelope {
+        version: u32,
+    }
+
+    serde_json::from_str::<VersionEnvelope>(value)
+        .map(|envelope| envelope.version)
+        .map_err(|_| AliasReferenceError::Malformed)
+}
+
+fn reserved_reference_field(
+    cipher: &CipherView,
+) -> Result<Option<&FieldView>, AliasReferenceError> {
+    let mut references = cipher
+        .fields
+        .iter()
+        .flatten()
+        .filter(|field| field.name.as_deref() == Some(ALIAS_REFERENCE_FIELD_NAME));
+    let Some(field) = references.next() else {
+        return Ok(None);
+    };
+    if references.next().is_some() {
+        return Err(AliasReferenceError::DuplicateFields);
+    }
+    if field.r#type != FieldType::Hidden {
+        return Err(AliasReferenceError::FieldMustBeHidden);
+    }
+    Ok(Some(field))
 }
 
 struct AliasIndex<'a> {
@@ -895,6 +1277,11 @@ fn skip_reason(error: &AliasReferenceError) -> AliasReconciliationSkipReason {
         AliasReferenceError::UnsupportedVersion { .. } => {
             AliasReconciliationSkipReason::UnsupportedReferenceVersion
         }
+        AliasReferenceError::LegacyReferenceRequiresMigration
+        | AliasReferenceError::LegacyConnectionNotFound
+        | AliasReferenceError::AmbiguousLegacyReference => {
+            AliasReconciliationSkipReason::LegacyReferenceRequiresMigration
+        }
         AliasReferenceError::DuplicateFields => {
             AliasReconciliationSkipReason::DuplicateReferenceFields
         }
@@ -903,7 +1290,11 @@ fn skip_reason(error: &AliasReferenceError) -> AliasReconciliationSkipReason {
         }
         AliasReferenceError::MissingValue => AliasReconciliationSkipReason::MissingReferenceValue,
         AliasReferenceError::NotLoginCipher => AliasReconciliationSkipReason::NonLoginCipher,
-        AliasReferenceError::InvalidProviderInstance(_) | AliasReferenceError::InvalidValue(_) => {
+        AliasReferenceError::DuplicateConnectionIdentity
+        | AliasReferenceError::InvalidProviderInstance(_)
+        | AliasReferenceError::InvalidConnectionIdentity(_)
+        | AliasReferenceError::MissingConnectionIdentity
+        | AliasReferenceError::InvalidValue(_) => {
             AliasReconciliationSkipReason::InvalidReferenceValue
         }
     }
@@ -914,7 +1305,7 @@ fn summarize(
     proposed_repairs: usize,
 ) -> AliasReconciliationSummary {
     let mut summary = AliasReconciliationSummary {
-        proposed_repairs,
+        proposed_repairs: proposed_repairs as u64,
         ..AliasReconciliationSummary::default()
     };
     for outcome in outcomes {
@@ -960,9 +1351,18 @@ fn write_reference(
     let username_changed = login.username.as_deref() != Some(address.as_str());
     let field_changed = if let Some(index) = reference_indices.first().copied() {
         let field = &mut fields[index];
-        let changed = field.r#type != FieldType::Hidden
-            || field.value.as_deref() != Some(encoded_reference.as_str());
-        field.r#type = FieldType::Hidden;
+        if field.r#type != FieldType::Hidden {
+            return Err(AliasReferenceError::FieldMustBeHidden);
+        }
+        let current_value = field
+            .value
+            .as_deref()
+            .ok_or(AliasReferenceError::MissingValue)?;
+        // Existing metadata must be valid and current. In particular, a version 1 field cannot be
+        // overwritten as an implicit account selection; it must go through explicit migration.
+        AliasReference::decode(current_value)?;
+        let changed =
+            field.value.as_deref() != Some(encoded_reference.as_str()) || field.linked_id.is_some();
         field.linked_id = None;
         field.value = Some(encoded_reference);
         changed
@@ -986,10 +1386,13 @@ mod tests {
     use bitwarden_vault::{CipherRepromptType, LoginView};
 
     use super::*;
-    use crate::{MailboxId, MailboxRef};
+    use crate::{MailboxId, MailboxRef, SIMPLELOGIN_DEFAULT_BASE_URL};
+
+    const CONNECTION_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const OTHER_CONNECTION_ID: &str = "22222222-2222-4222-8222-222222222222";
 
     fn provider() -> AliasProviderIdentity {
-        AliasProviderIdentity::simplelogin("https://aliases.example.test")
+        AliasProviderIdentity::simplelogin("https://aliases.example.test", CONNECTION_ID)
             .expect("test provider URL should be valid")
     }
 
@@ -1077,22 +1480,179 @@ mod tests {
     fn reference_round_trips_without_rendering_sensitive_values() {
         let provider = provider();
         let alias = alias(41, "private-alias@example.test".to_owned());
-        let reference = AliasReference::new(&provider, &alias);
+        let reference = AliasReference::new(&provider, &alias).expect("reference should construct");
         let encoded = reference.encode().expect("reference should encode");
         let decoded = AliasReference::decode(encoded.expose()).expect("reference should decode");
 
         assert_eq!(decoded, reference);
+        assert_eq!(
+            encoded.expose(),
+            &format!(
+                "{{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"private-alias@example.test\"}}"
+            )
+        );
         assert!(!format!("{reference:?}").contains("private-alias"));
-        assert!(AliasProviderIdentity::simplelogin("https://user:password@example.test").is_err());
+        assert!(
+            AliasProviderIdentity::simplelogin("https://user:password@example.test", CONNECTION_ID)
+                .is_err()
+        );
 
         let oversized = format!(
-            "{{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":41,\"address\":\"{}\"}}",
+            "{{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"{}\"}}",
             "a".repeat(MAX_ALIAS_REFERENCE_BYTES)
         );
         assert!(matches!(
             AliasReference::decode(&oversized),
             Err(AliasReferenceError::TooLarge { .. })
         ));
+        assert!(matches!(
+            AliasProviderIdentity::simplelogin("https://aliases.example.test", "api-token"),
+            Err(AliasReferenceError::InvalidConnectionIdentity(_))
+        ));
+        assert!(matches!(
+            AliasProviderIdentity::simplelogin(
+                "https://aliases.example.test",
+                "11111111-1111-1111-8111-111111111111"
+            ),
+            Err(AliasReferenceError::InvalidConnectionIdentity(_))
+        ));
+        assert!(matches!(
+            AliasProviderIdentity::simplelogin(
+                "https://aliases.example.test",
+                "00000000-0000-0000-0000-000000000000"
+            ),
+            Err(AliasReferenceError::InvalidConnectionIdentity(_))
+        ));
+        let with_secret_field = encoded.expose().replace(
+            "\"aliasId\"",
+            "\"apiToken\":\"never-store-this\",\"aliasId\"",
+        );
+        assert!(matches!(
+            AliasReference::decode(&with_secret_field),
+            Err(AliasReferenceError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn same_origin_accounts_with_overlapping_alias_ids_remain_isolated() {
+        let first = provider();
+        let second =
+            AliasProviderIdentity::simplelogin("https://aliases.example.test", OTHER_CONNECTION_ID)
+                .expect("second connection should be valid");
+        let first_alias = alias(7, "first@example.test".to_owned());
+        let second_alias = alias(7, "second@example.test".to_owned());
+        let first_id = CipherId::new_v4();
+        let second_id = CipherId::new_v4();
+        let mut first_cipher = login_cipher(Some(first_id), None);
+        let mut second_cipher = login_cipher(Some(second_id), None);
+        AliasReference::new(&first, &first_alias)
+            .expect("first reference should construct")
+            .bind_to_cipher(&mut first_cipher)
+            .expect("first reference should bind");
+        AliasReference::new(&second, &second_alias)
+            .expect("second reference should construct")
+            .bind_to_cipher(&mut second_cipher)
+            .expect("second reference should bind");
+        let ciphers = [first_cipher, second_cipher];
+
+        let first_plan = plan_alias_reconciliation(&first, &[first_alias], &ciphers)
+            .expect("first account should reconcile");
+        assert_eq!(first_plan.summary.matched, 1);
+        assert_eq!(first_plan.summary.skipped_ciphers, 1);
+        assert!(first_plan.actions.is_empty());
+
+        let second_plan = plan_alias_reconciliation(&second, &[second_alias], &ciphers)
+            .expect("second account should reconcile");
+        assert_eq!(second_plan.summary.matched, 1);
+        assert_eq!(second_plan.summary.skipped_ciphers, 1);
+        assert!(second_plan.actions.is_empty());
+    }
+
+    #[test]
+    fn hosted_and_self_hosted_instances_remain_isolated() {
+        let hosted =
+            AliasProviderIdentity::simplelogin(SIMPLELOGIN_DEFAULT_BASE_URL, CONNECTION_ID)
+                .expect("hosted connection should be valid");
+        let self_hosted = AliasProviderIdentity::simplelogin(
+            "https://aliases.example.test/simplelogin",
+            CONNECTION_ID,
+        )
+        .expect("self-hosted connection should be valid");
+        assert_ne!(hosted, self_hosted);
+
+        let provider_alias = alias(9, "hosted@example.test".to_owned());
+        let mut cipher = login_cipher(Some(CipherId::new_v4()), None);
+        AliasReference::new(&hosted, &provider_alias)
+            .expect("hosted reference should construct")
+            .bind_to_cipher(&mut cipher)
+            .expect("hosted reference should bind");
+        let plan = plan_alias_reconciliation(&self_hosted, &[provider_alias], &[cipher])
+            .expect("foreign hosted reference should be skipped");
+        assert_eq!(plan.summary.skipped_ciphers, 1);
+        assert_eq!(plan.summary.unbound_aliases, 1);
+        assert!(plan.actions.is_empty());
+    }
+
+    #[test]
+    fn legacy_migration_is_explicit_idempotent_and_rejects_ambiguity() {
+        let first = provider();
+        let second =
+            AliasProviderIdentity::simplelogin("https://aliases.example.test", OTHER_CONNECTION_ID)
+                .expect("second connection should be valid");
+        let legacy = "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":41,\"address\":\"legacy@example.test\"}";
+
+        assert!(matches!(
+            AliasReference::decode(legacy),
+            Err(AliasReferenceError::LegacyReferenceRequiresMigration)
+        ));
+        assert!(matches!(
+            AliasReference::migrate(legacy, &[first.clone(), second]),
+            Err(AliasReferenceError::AmbiguousLegacyReference)
+        ));
+
+        let migrated = AliasReference::migrate(legacy, std::slice::from_ref(&first))
+            .expect("explicitly selected connection should migrate");
+        assert_eq!(migrated.version, ALIAS_REFERENCE_VERSION);
+        assert_eq!(migrated.provider_identity(), first);
+        let canonical = migrated.encode().expect("migrated reference should encode");
+        assert_eq!(
+            AliasReference::migrate(canonical.expose(), &[])
+                .expect("current migration should be idempotent"),
+            migrated
+        );
+
+        let mut cipher = login_cipher(
+            Some(CipherId::new_v4()),
+            Some("legacy@example.test".to_owned()),
+        );
+        attach_raw_reference(&mut cipher, legacy.to_owned(), FieldType::Hidden);
+        let before = plan_alias_reconciliation(
+            &first,
+            &[alias(41, "legacy@example.test".to_owned())],
+            &[cipher.clone()],
+        )
+        .expect("legacy reference should be safely skipped");
+        assert!(matches!(
+            before.outcomes.as_slice(),
+            [
+                AliasReconciliationOutcome::SkippedCipher {
+                    reason: AliasReconciliationSkipReason::LegacyReferenceRequiresMigration,
+                    ..
+                },
+                AliasReconciliationOutcome::UnboundAlias { .. }
+            ]
+        ));
+
+        let migration = AliasReference::migrate_cipher(&mut cipher, std::slice::from_ref(&first))
+            .expect("cipher migration should succeed");
+        assert!(migration.changed);
+        assert_eq!(
+            AliasReference::from_cipher(&cipher)
+                .expect("migrated field should parse")
+                .expect("migrated field should exist")
+                .provider_identity(),
+            first
+        );
     }
 
     #[test]
@@ -1118,18 +1678,21 @@ mod tests {
             login_cipher(Some(ordinary_id), Some("owner@example.test".to_owned())),
         ];
 
-        let mut stale_reference = AliasReference::new(&provider, &aliases[1]);
+        let mut stale_reference =
+            AliasReference::new(&provider, &aliases[1]).expect("reference should construct");
         stale_reference.address = SensitiveString::from("old-two@example.test");
         stale_reference
             .bind_to_cipher(&mut ciphers[1])
             .expect("stale test reference should attach");
         AliasReference::new(&provider, &aliases[2])
+            .expect("reference should construct")
             .bind_to_cipher(&mut ciphers[2])
             .expect("matching test reference should attach");
         AliasReference {
             version: ALIAS_REFERENCE_VERSION,
             provider: AliasProvider::SimpleLogin,
             provider_instance: provider.instance.clone(),
+            connection_id: provider.connection_id.clone(),
             alias_id: AliasId(999),
             address: SensitiveString::from("removed@example.test"),
         }
@@ -1197,6 +1760,7 @@ mod tests {
         ));
 
         AliasReference::new(&provider, &aliases[0])
+            .expect("reference should construct")
             .bind_to_cipher(&mut ciphers[0])
             .expect("test reference should attach");
         let mixed_plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
@@ -1225,20 +1789,24 @@ mod tests {
 
         let mut visible = login_cipher(Some(CipherId::new_v4()), None);
         let encoded = AliasReference::new(&provider, &aliases[0])
+            .expect("reference should construct")
             .encode()
             .expect("reference should encode")
             .expose_owned();
         attach_raw_reference(&mut visible, encoded, FieldType::Text);
 
         let foreign_provider =
-            AliasProviderIdentity::simplelogin("https://other.example.test").expect("valid URL");
+            AliasProviderIdentity::simplelogin("https://other.example.test", OTHER_CONNECTION_ID)
+                .expect("valid URL");
         let mut foreign = login_cipher(Some(CipherId::new_v4()), None);
         AliasReference::new(&foreign_provider, &aliases[0])
+            .expect("reference should construct")
             .bind_to_cipher(&mut foreign)
             .expect("foreign reference should attach");
 
         let mut non_login = login_cipher(Some(CipherId::new_v4()), None);
         AliasReference::new(&provider, &aliases[0])
+            .expect("reference should construct")
             .bind_to_cipher(&mut non_login)
             .expect("reference should attach before changing type");
         non_login.r#type = CipherType::SecureNote;
@@ -1258,6 +1826,76 @@ mod tests {
             .map(|outcome| format!("{outcome:?}"))
             .collect::<String>();
         assert!(!rendered.contains("do-not-render"));
+    }
+
+    #[test]
+    fn duplicate_oversized_and_hostile_reserved_fields_are_never_repaired() {
+        let provider = provider();
+        let aliases = vec![alias(18, "eighteen@example.test".to_owned())];
+        let valid = AliasReference::new(&provider, &aliases[0])
+            .expect("reference should construct")
+            .encode()
+            .expect("reference should encode")
+            .expose_owned();
+
+        let mut duplicate = login_cipher(Some(CipherId::new_v4()), None);
+        attach_raw_reference(&mut duplicate, valid.clone(), FieldType::Hidden);
+        attach_raw_reference(&mut duplicate, valid, FieldType::Hidden);
+
+        let mut oversized = login_cipher(Some(CipherId::new_v4()), None);
+        attach_raw_reference(
+            &mut oversized,
+            "x".repeat(MAX_ALIAS_REFERENCE_BYTES + 1),
+            FieldType::Hidden,
+        );
+
+        let hostile_secret = "hostile-api-token-never-render";
+        let mut hostile = login_cipher(Some(CipherId::new_v4()), None);
+        attach_raw_reference(
+            &mut hostile,
+            format!(
+                "{{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":18,\"address\":\"eighteen@example.test\",\"apiToken\":\"{hostile_secret}\"}}"
+            ),
+            FieldType::Hidden,
+        );
+        hostile.fields.get_or_insert_with(Vec::new).push(FieldView {
+            name: Some("x".repeat(MAX_ALIAS_REFERENCE_BYTES * 2)),
+            value: Some(hostile_secret.to_owned()),
+            r#type: FieldType::Hidden,
+            linked_id: None,
+        });
+
+        let mut missing = login_cipher(Some(CipherId::new_v4()), None);
+        missing.fields = Some(vec![FieldView {
+            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
+            value: None,
+            r#type: FieldType::Hidden,
+            linked_id: None,
+        }]);
+
+        let ciphers = vec![duplicate, oversized, hostile, missing];
+        let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
+            .expect("hostile fields should be skipped rather than aborting reconciliation");
+        assert_eq!(plan.summary.skipped_ciphers, 4);
+        assert_eq!(plan.summary.unbound_aliases, 1);
+        assert!(plan.actions.is_empty());
+        let rendered = format!("{:?}", plan.outcomes);
+        assert!(!rendered.contains(hostile_secret));
+
+        let mut legacy = login_cipher(Some(CipherId::new_v4()), None);
+        attach_raw_reference(
+            &mut legacy,
+            "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":18,\"address\":\"eighteen@example.test\"}".to_owned(),
+            FieldType::Hidden,
+        );
+        let bind_error = AliasReference::new(&provider, &aliases[0])
+            .expect("reference should construct")
+            .bind_to_cipher(&mut legacy)
+            .expect_err("binding must not silently choose a connection for legacy metadata");
+        assert!(matches!(
+            bind_error,
+            AliasReferenceError::LegacyReferenceRequiresMigration
+        ));
     }
 
     #[test]
@@ -1307,6 +1945,7 @@ mod tests {
 
         for (alias, cipher) in aliases.iter().zip(ciphers.iter_mut()).take(ITEM_COUNT / 2) {
             AliasReference::new(&provider, alias)
+                .expect("reference should construct")
                 .bind_to_cipher(cipher)
                 .expect("scale fixture reference should attach");
         }
@@ -1314,7 +1953,7 @@ mod tests {
         let started = Instant::now();
         let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
             .expect("scale plan should succeed");
-        assert_eq!(plan.summary.matched, ITEM_COUNT / 2);
+        assert_eq!(plan.summary.matched, (ITEM_COUNT / 2) as u64);
         assert_eq!(plan.actions.len(), ITEM_COUNT / 2);
         let applied = apply_alias_reconciliation(&plan, &aliases, &mut ciphers)
             .expect("scale apply should succeed");
@@ -1322,7 +1961,7 @@ mod tests {
         let verified = plan_alias_reconciliation(&provider, &aliases, &ciphers)
             .expect("scale verification should succeed");
         assert!(verified.actions.is_empty());
-        assert_eq!(verified.summary.matched, ITEM_COUNT);
+        assert_eq!(verified.summary.matched, ITEM_COUNT as u64);
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "10k plan/apply/verify should remain comfortably linear"

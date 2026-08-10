@@ -32,7 +32,8 @@ const MAX_SUCCESS_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_ERROR_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_RENDERED_ERROR_CHARS: usize = 512;
 
-type AliasStateLocks = Mutex<HashMap<(String, AliasId), Weak<tokio::sync::Mutex<()>>>>;
+type AliasStateLocks =
+    Mutex<HashMap<(String, Option<String>, AliasId), Weak<tokio::sync::Mutex<()>>>>;
 
 /// SimpleLogin only exposes a toggle endpoint. Serialize explicit state changes by provider and
 /// stable ID across every client in this process so concurrent callers cannot double-toggle an
@@ -48,6 +49,12 @@ pub struct AliasClientSettings {
     pub base_url: String,
     /// SimpleLogin API key sent in the `Authentication` header.
     pub api_token: SensitiveString,
+    /// Stable non-secret UUID v4 assigned to this provider account by the consuming client.
+    ///
+    /// This is optional only for compatibility with legacy address-only generator operations.
+    /// Reference creation and reconciliation require it.
+    #[serde(default)]
+    pub connection_id: Option<String>,
 }
 
 impl AliasClientSettings {
@@ -56,7 +63,14 @@ impl AliasClientSettings {
         Self {
             base_url: SIMPLELOGIN_DEFAULT_BASE_URL.to_owned(),
             api_token,
+            connection_id: None,
         }
+    }
+
+    /// Associates these settings with a stable, client-persisted provider connection UUID v4.
+    pub fn with_connection_id(mut self, connection_id: String) -> Self {
+        self.connection_id = Some(connection_id);
+        self
     }
 
     /// Overrides the service base URL, primarily for self-hosted SimpleLogin instances.
@@ -70,6 +84,7 @@ struct AliasClientInner {
     http: reqwest::Client,
     base_url: Url,
     api_token: SensitiveString,
+    connection_id: Option<String>,
 }
 
 /// Client for the complete SimpleLogin alias lifecycle.
@@ -83,6 +98,10 @@ impl AliasClient {
     pub fn new(settings: AliasClientSettings) -> Result<Self, AliasError> {
         let base_url = validate_base_url(&settings.base_url)?;
         validate_token(&settings.api_token)?;
+        if let Some(connection_id) = settings.connection_id.as_deref() {
+            AliasProviderIdentity::from_simplelogin_url(&base_url, connection_id)
+                .map_err(|_| AliasError::InvalidConnectionIdentity)?;
+        }
         let http = bitwarden_api_base::new_http_client_builder();
         #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
         // Lifecycle mutations are not universally replay-safe (creation and toggle in
@@ -99,18 +118,27 @@ impl AliasClient {
                 http,
                 base_url,
                 api_token: settings.api_token,
+                connection_id: settings.connection_id,
             }),
         })
     }
 
     /// Returns the stable provider identity used to namespace vault alias references.
-    pub fn provider_identity(&self) -> AliasProviderIdentity {
-        AliasProviderIdentity::from_simplelogin_url(&self.inner.base_url)
+    pub fn provider_identity(&self) -> Result<AliasProviderIdentity, crate::AliasReferenceError> {
+        let connection_id = self
+            .inner
+            .connection_id
+            .as_deref()
+            .ok_or(crate::AliasReferenceError::MissingConnectionIdentity)?;
+        AliasProviderIdentity::from_simplelogin_url(&self.inner.base_url, connection_id)
     }
 
     /// Creates a versioned vault reference for alias data returned by this client.
-    pub fn alias_reference(&self, alias: &Alias) -> AliasReference {
-        AliasReference::new(&self.provider_identity(), alias)
+    pub fn alias_reference(
+        &self,
+        alias: &Alias,
+    ) -> Result<AliasReference, crate::AliasReferenceError> {
+        AliasReference::new(&self.provider_identity()?, alias)
     }
 
     /// Creates a random alias and returns its stable identity and full lifecycle data.
@@ -522,7 +550,11 @@ impl AliasClient {
     }
 
     fn alias_state_lock(&self, alias_id: AliasId) -> Arc<tokio::sync::Mutex<()>> {
-        let key = (self.inner.base_url.as_str().to_owned(), alias_id);
+        let key = (
+            self.inner.base_url.as_str().to_owned(),
+            self.inner.connection_id.clone(),
+            alias_id,
+        );
         let mut locks = ALIAS_STATE_LOCKS
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()

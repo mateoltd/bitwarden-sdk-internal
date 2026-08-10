@@ -16,7 +16,13 @@ fun main() = runBlocking {
     val unique = UUID.randomUUID().toString().lowercase()
     val hostname = "kotlin-$unique.integration.test"
     val searchText = "kotlin-live-$unique"
-    val client = AliasClient(AliasClientSettings(baseUrl = baseUrl, apiToken = apiToken))
+    val client = AliasClient(
+        AliasClientSettings(
+            baseUrl = baseUrl,
+            apiToken = apiToken,
+            connectionId = "11111111-1111-4111-8111-111111111111",
+        ),
+    )
     val aliasIds = mutableListOf<AliasId>()
     var contactId: ContactId? = null
 

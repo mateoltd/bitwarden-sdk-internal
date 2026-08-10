@@ -1,11 +1,22 @@
 use bitwarden_alias::{
-    Alias, AliasClientSettings, AliasCreationOptions, AliasDomain, AliasError, AliasFilter,
-    AliasId, AliasPage, AliasRecommendation, AliasState, ContactId, ContactState,
-    CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
-    DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, MailboxId, ReverseAlias,
-    ReverseAliasPage, SearchAliasesRequest,
+    Alias, AliasCipherMigrationOutput, AliasCipherMutationResult, AliasClientSettings,
+    AliasCreationOptions, AliasDomain, AliasError, AliasFilter, AliasId, AliasPage,
+    AliasProviderIdentity, AliasRecommendation, AliasReconciliationApplyOutput,
+    AliasReconciliationError, AliasReconciliationPlan, AliasReference, AliasReferenceError,
+    AliasState, ContactId, ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest,
+    CustomDomain, CustomDomainId, DeleteAliasResult, DeleteContactResult, ListAliasesRequest,
+    Mailbox, MailboxId, ReverseAlias, ReverseAliasPage, SearchAliasesRequest,
+    apply_alias_reconciliation_owned as core_apply_alias_reconciliation,
+    bind_alias_reference as core_bind_alias_reference,
+    create_alias_reference as core_create_alias_reference,
+    migrate_alias_reference as core_migrate_alias_reference,
+    migrate_cipher_alias_reference as core_migrate_cipher_alias_reference,
+    parse_alias_reference as core_parse_alias_reference,
+    plan_alias_reconciliation as core_plan_alias_reconciliation,
+    serialize_alias_reference as core_serialize_alias_reference,
 };
-use bitwarden_sensitive_value::SensitiveString;
+use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
+use bitwarden_vault::CipherView;
 use serde::Deserialize;
 use tsify::Tsify;
 use wasm_bindgen::prelude::*;
@@ -86,6 +97,81 @@ impl From<CustomDomainUpdateRequest> for bitwarden_alias::UpdateCustomDomainRequ
     }
 }
 
+/// Creates the canonical serialized current alias reference.
+#[wasm_bindgen]
+pub fn create_alias_reference(
+    identity: AliasProviderIdentity,
+    alias: Alias,
+) -> Result<SensitiveString, AliasReferenceError> {
+    core_create_alias_reference(&identity, &alias)
+}
+
+/// Parses and validates a current alias reference without exposing its payload in errors.
+#[wasm_bindgen]
+pub fn parse_alias_reference(
+    value: SensitiveString,
+) -> Result<AliasReference, AliasReferenceError> {
+    // EXPOSE: Parsing requires the decrypted hidden-field payload. Errors never render it.
+    core_parse_alias_reference(value.expose())
+}
+
+/// Re-serializes a parsed reference into the one canonical JSON representation.
+#[wasm_bindgen]
+pub fn serialize_alias_reference(
+    reference: AliasReference,
+) -> Result<SensitiveString, AliasReferenceError> {
+    core_serialize_alias_reference(&reference)
+}
+
+/// Binds a canonical current reference to a decrypted login cipher.
+#[wasm_bindgen]
+pub fn bind_alias_reference(
+    value: SensitiveString,
+    cipher: CipherView,
+) -> Result<AliasCipherMutationResult, AliasReferenceError> {
+    // EXPOSE: Binding parses decrypted vault metadata and returns it only in the decrypted cipher.
+    core_bind_alias_reference(value.expose(), cipher)
+}
+
+/// Explicitly migrates a serialized legacy reference with caller-selected connections.
+#[wasm_bindgen]
+pub fn migrate_alias_reference(
+    value: SensitiveString,
+    connections: Vec<AliasProviderIdentity>,
+) -> Result<SensitiveString, AliasReferenceError> {
+    // EXPOSE: Migration parses decrypted vault metadata. Errors never render it.
+    core_migrate_alias_reference(value.expose(), &connections)
+}
+
+/// Explicitly migrates the reserved encrypted reference field on a decrypted cipher.
+#[wasm_bindgen]
+pub fn migrate_cipher_alias_reference(
+    cipher: CipherView,
+    connections: Vec<AliasProviderIdentity>,
+) -> Result<AliasCipherMigrationOutput, AliasReferenceError> {
+    core_migrate_cipher_alias_reference(cipher, &connections)
+}
+
+/// Computes a deterministic non-mutating reconciliation plan.
+#[wasm_bindgen]
+pub fn plan_alias_reconciliation(
+    provider: AliasProviderIdentity,
+    aliases: Vec<Alias>,
+    ciphers: Vec<CipherView>,
+) -> Result<AliasReconciliationPlan, AliasReconciliationError> {
+    core_plan_alias_reconciliation(&provider, &aliases, &ciphers)
+}
+
+/// Atomically validates and applies a reconciliation plan to owned decrypted ciphers.
+#[wasm_bindgen]
+pub fn apply_alias_reconciliation(
+    plan: AliasReconciliationPlan,
+    aliases: Vec<Alias>,
+    ciphers: Vec<CipherView>,
+) -> Result<AliasReconciliationApplyOutput, AliasReconciliationError> {
+    core_apply_alias_reconciliation(&plan, &aliases, ciphers)
+}
+
 /// Complete SimpleLogin alias lifecycle operations for WebAssembly consumers.
 #[wasm_bindgen]
 pub struct AliasClient(bitwarden_alias::AliasClient);
@@ -102,6 +188,19 @@ impl AliasClient {
     #[wasm_bindgen(constructor)]
     pub fn new(settings: AliasClientSettings) -> Result<Self, AliasError> {
         bitwarden_alias::AliasClient::new(settings).map(Self)
+    }
+
+    /// Returns the stable non-secret identity that selects this provider connection.
+    pub fn provider_identity(&self) -> Result<AliasProviderIdentity, AliasReferenceError> {
+        self.0.provider_identity()
+    }
+
+    /// Creates the canonical serialized reference for alias data returned by this client.
+    pub fn create_alias_reference(
+        &self,
+        alias: Alias,
+    ) -> Result<SensitiveString, AliasReferenceError> {
+        self.0.alias_reference(&alias)?.encode()
     }
 
     /// Creates a random alias.

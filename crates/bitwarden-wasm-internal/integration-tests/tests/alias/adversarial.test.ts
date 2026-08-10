@@ -3,6 +3,7 @@ import { runInNewContext, runInThisContext } from "node:vm";
 
 const sensitive = (value: string): SensitiveString => value as SensitiveString;
 const token = "wasm-adversarial-token";
+const connectionId = "11111111-1111-4111-8111-111111111111";
 
 const aliasJson = (id: number, enabled: boolean) => ({
   id,
@@ -61,6 +62,7 @@ const newClient = () =>
   new AliasClient({
     base_url: "https://simplelogin.invalid/",
     api_token: sensitive(token),
+    connection_id: connectionId,
   });
 
 type ErrorRenderings = {

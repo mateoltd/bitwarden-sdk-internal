@@ -13,6 +13,9 @@ pub enum AliasError {
     /// The authentication token cannot be represented as an HTTP header.
     #[error("invalid alias provider authentication token")]
     InvalidAuthenticationToken,
+    /// The supplied connection identity is not a canonical UUID v4.
+    #[error("invalid alias provider connection identity")]
+    InvalidConnectionIdentity,
     /// The provider attempted an authenticated redirect. Redirect locations are deliberately not
     /// rendered because they can contain sensitive data.
     #[error("alias provider redirect rejected (HTTP {status})")]

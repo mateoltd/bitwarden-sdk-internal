@@ -15,7 +15,11 @@ struct SimpleLoginLive {
         let hostname = "swift-\(unique).integration.test"
         let searchText = "swift-live-\(unique)"
         let client = try AliasClient(
-            settings: AliasClientSettings(baseUrl: baseUrl, apiToken: apiToken)
+            settings: AliasClientSettings(
+                baseUrl: baseUrl,
+                apiToken: apiToken,
+                connectionId: "11111111-1111-4111-8111-111111111111"
+            )
         )
         var aliasIds: [AliasId] = []
         var contactId: ContactId?

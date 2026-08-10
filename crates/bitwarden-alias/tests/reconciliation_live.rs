@@ -25,7 +25,9 @@ async fn reconciles_real_simplelogin_with_real_vault_models() {
         .expect("system time should follow the Unix epoch")
         .as_nanos();
     let client = AliasClient::new(
-        AliasClientSettings::new(SensitiveString::from(api_token)).with_base_url(api_url),
+        AliasClientSettings::new(SensitiveString::from(api_token))
+            .with_base_url(api_url)
+            .with_connection_id("11111111-1111-4111-8111-111111111111".to_owned()),
     )
     .expect("live SimpleLogin client should be constructible");
 
@@ -42,7 +44,9 @@ async fn reconciles_real_simplelogin_with_real_vault_models() {
         .await
         .expect("real alias creation should succeed");
     let alias_id = alias.id;
-    let provider = client.provider_identity();
+    let provider = client
+        .provider_identity()
+        .expect("live client should have a connection identity");
     let cipher_id = CipherId::new_v4();
     let mut ciphers = vec![login_cipher(cipher_id, alias.email.expose().to_owned())];
 
@@ -71,7 +75,9 @@ async fn reconciles_real_simplelogin_with_real_vault_models() {
         alias_id
     );
 
-    let mut stale = client.alias_reference(&alias);
+    let mut stale = client
+        .alias_reference(&alias)
+        .expect("live alias should produce a reference");
     stale.address = SensitiveString::from(format!("stale-{unique}@example.test"));
     stale
         .bind_to_cipher(&mut ciphers[0])
@@ -106,6 +112,7 @@ async fn reconciles_real_simplelogin_with_real_vault_models() {
         version: ALIAS_REFERENCE_VERSION,
         provider: AliasProvider::SimpleLogin,
         provider_instance: provider.instance.clone(),
+        connection_id: provider.connection_id.clone(),
         alias_id: AliasId(alias_id.0 + 1_000_000),
         address: SensitiveString::from("missing@example.test"),
     }
