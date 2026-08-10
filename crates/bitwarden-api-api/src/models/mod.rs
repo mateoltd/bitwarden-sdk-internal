@@ -648,6 +648,8 @@ pub mod payment_method_type;
 pub use self::payment_method_type::PaymentMethodType;
 pub mod payment_response_model;
 pub use self::payment_response_model::PaymentResponseModel;
+pub mod pending_annual_upgrade_response_model;
+pub use self::pending_annual_upgrade_response_model::PendingAnnualUpgradeResponseModel;
 pub mod pending_auth_request;
 pub use self::pending_auth_request::PendingAuthRequest;
 pub mod pending_auth_request_response_model;

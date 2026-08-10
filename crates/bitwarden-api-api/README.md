@@ -22,7 +22,7 @@ client.
 - API version: latest
 - Package version: 3.0.0
 - Server Git commit:
-  [`5fb52be87ba94df49b5d53caf53907f72bf1cc4c`](https://github.com/bitwarden/server/commit/5fb52be87ba94df49b5d53caf53907f72bf1cc4c)
+  [`42d286e55c77f7c957b54f901bc7b65d1364c011`](https://github.com/bitwarden/server/commit/42d286e55c77f7c957b54f901bc7b65d1364c011)
 - Generator version: 7.15.0
 - Build package: `org.openapitools.codegen.languages.RustClientCodegen`
 
@@ -270,12 +270,14 @@ All URIs are relative to *https://api.bitwarden.com*
 | _OrganizationBillingApi_                  | [**get_transactions**](docs/OrganizationBillingApi.md#organization_billing_get_transactions)                                                                     | **GET** /organizations/{organizationId}/billing/transactions                                             |
 | _OrganizationBillingApi_                  | [**setup_business_unit**](docs/OrganizationBillingApi.md#organization_billing_setup_business_unit)                                                               | **POST** /organizations/{organizationId}/billing/setup-business-unit                                     |
 | _OrganizationBillingVNextApi_             | [**add_credit_via_bit_pay**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_add_credit_via_bit_pay)                                             | **POST** /organizations/{organizationId}/billing/vnext/credit/bitpay                                     |
+| _OrganizationBillingVNextApi_             | [**get_annual_upgrade_offer**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_annual_upgrade_offer)                                         | **GET** /organizations/{organizationId}/billing/vnext/annual-upgrade-offer                               |
 | _OrganizationBillingVNextApi_             | [**get_billing_address**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_billing_address)                                                   | **GET** /organizations/{organizationId}/billing/vnext/address                                            |
 | _OrganizationBillingVNextApi_             | [**get_churn_mitigation_offer**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_churn_mitigation_offer)                                     | **GET** /organizations/{organizationId}/billing/vnext/churn-mitigation-offer                             |
 | _OrganizationBillingVNextApi_             | [**get_credit**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_credit)                                                                     | **GET** /organizations/{organizationId}/billing/vnext/credit                                             |
 | _OrganizationBillingVNextApi_             | [**get_metadata**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_metadata)                                                                 | **GET** /organizations/{organizationId}/billing/vnext/metadata                                           |
 | _OrganizationBillingVNextApi_             | [**get_payment_method**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_payment_method)                                                     | **GET** /organizations/{organizationId}/billing/vnext/payment-method                                     |
 | _OrganizationBillingVNextApi_             | [**get_warnings**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_get_warnings)                                                                 | **GET** /organizations/{organizationId}/billing/vnext/warnings                                           |
+| _OrganizationBillingVNextApi_             | [**redeem_annual_upgrade_offer**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_redeem_annual_upgrade_offer)                                   | **POST** /organizations/{organizationId}/billing/vnext/annual-upgrade-offer/redeem                       |
 | _OrganizationBillingVNextApi_             | [**redeem_churn_mitigation_offer**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_redeem_churn_mitigation_offer)                               | **POST** /organizations/{organizationId}/billing/vnext/churn-mitigation-offer/redeem                     |
 | _OrganizationBillingVNextApi_             | [**restart_subscription**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_restart_subscription)                                                 | **POST** /organizations/{organizationId}/billing/vnext/subscription/restart                              |
 | _OrganizationBillingVNextApi_             | [**update_billing_address**](docs/OrganizationBillingVNextApi.md#organization_billing_v_next_update_billing_address)                                             | **PUT** /organizations/{organizationId}/billing/vnext/address                                            |
@@ -884,6 +886,7 @@ All URIs are relative to *https://api.bitwarden.com*
 - [PasswordRequestModel](docs/PasswordRequestModel.md)
 - [PaymentMethodType](docs/PaymentMethodType.md)
 - [PaymentResponseModel](docs/PaymentResponseModel.md)
+- [PendingAnnualUpgradeResponseModel](docs/PendingAnnualUpgradeResponseModel.md)
 - [PendingAuthRequest](docs/PendingAuthRequest.md)
 - [PendingAuthRequestResponseModel](docs/PendingAuthRequestResponseModel.md)
 - [PendingAuthRequestResponseModelListResponseModel](docs/PendingAuthRequestResponseModelListResponseModel.md)

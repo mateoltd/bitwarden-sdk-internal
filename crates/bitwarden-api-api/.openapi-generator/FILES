@@ -399,6 +399,7 @@ src/models/password_manager_update_selections.rs
 src/models/password_request_model.rs
 src/models/payment_method_type.rs
 src/models/payment_response_model.rs
+src/models/pending_annual_upgrade_response_model.rs
 src/models/pending_auth_request.rs
 src/models/pending_auth_request_response_model.rs
 src/models/pending_auth_request_response_model_list_response_model.rs
