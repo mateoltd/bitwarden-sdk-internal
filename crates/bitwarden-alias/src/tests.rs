@@ -1,3 +1,14 @@
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use serde_json::{Value, json};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
@@ -606,6 +617,264 @@ async fn maps_auth_rate_limit_content_type_and_invalid_json_errors() {
     ));
 }
 
+#[tokio::test]
+async fn serializes_concurrent_explicit_state_changes() {
+    let server = MockServer::start().await;
+    let enabled = Arc::new(AtomicBool::new(true));
+    let toggle_count = Arc::new(AtomicUsize::new(0));
+
+    let state = Arc::clone(&enabled);
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/aliases/91"))
+        .respond_with(move |_: &wiremock::Request| {
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(50))
+                .set_body_json(alias_json(91, state.load(Ordering::SeqCst)))
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let state = Arc::clone(&enabled);
+    let requests = Arc::clone(&toggle_count);
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/api/aliases/91/toggle"))
+        .respond_with(move |_: &wiremock::Request| {
+            requests.fetch_add(1, Ordering::SeqCst);
+            let new_state = !state.fetch_xor(true, Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_json(json!({"enabled": new_state}))
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let first_client = client(&server);
+    let second_client = client(&server);
+    let (first, second) = tokio::join!(
+        first_client.disable_alias(AliasId(91)),
+        second_client.disable_alias(AliasId(91))
+    );
+    assert!(!first.expect("first disable should succeed").enabled);
+    assert!(!second.expect("second disable should be idempotent").enabled);
+    assert!(!enabled.load(Ordering::SeqCst));
+    assert_eq!(toggle_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn rejects_impossible_or_conflicting_provider_identity() {
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/aliases/92"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(alias_json(93, true)))
+        .mount(&server)
+        .await;
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/v2/aliases"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "aliases": [alias_json(94, true), alias_json(94, false)]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/aliases/95"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(alias_json(95, true)))
+        .mount(&server)
+        .await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/api/aliases/95/toggle"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"enabled": true})))
+        .mount(&server)
+        .await;
+    let mut zero = alias_json(96, true);
+    zero["id"] = json!(0);
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/api/alias/random/new"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(zero))
+        .mount(&server)
+        .await;
+    let mut conflicting_mailbox = alias_json(102, true);
+    conflicting_mailbox["mailbox"]["id"] = json!(999);
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/aliases/102"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(conflicting_mailbox))
+        .mount(&server)
+        .await;
+
+    let client = client(&server);
+    assert!(matches!(
+        client.get_alias(AliasId(92)).await,
+        Err(AliasError::InvalidResponseValue(
+            "provider returned a different alias identifier"
+        ))
+    ));
+    assert!(matches!(
+        client.list_aliases(ListAliasesRequest::default()).await,
+        Err(AliasError::InvalidResponseValue(
+            "provider returned a zero or duplicate stable identifier"
+        ))
+    ));
+    assert!(matches!(
+        client.disable_alias(AliasId(95)).await,
+        Err(AliasError::InvalidResponseValue(
+            "provider returned an unexpected alias state"
+        ))
+    ));
+    assert!(matches!(
+        client
+            .create_random_alias(CreateRandomAliasRequest::default())
+            .await,
+        Err(AliasError::InvalidResponseValue(
+            "provider returned a zero or duplicate stable identifier"
+        ))
+    ));
+    assert!(matches!(
+        client.get_alias(AliasId(102)).await,
+        Err(AliasError::InvalidResponseValue(
+            "provider returned conflicting alias mailbox identity"
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn reports_partial_update_failure_without_replaying_the_mutation() {
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("PATCH"))
+        .and(matchers::path("/api/aliases/97"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/aliases/97"))
+        .respond_with(
+            ResponseTemplate::new(503).set_body_json(json!({"error": "detail unavailable"})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let error = client(&server)
+        .update_alias(
+            AliasId(97),
+            UpdateAliasRequest {
+                pinned: Some(true),
+                ..UpdateAliasRequest::default()
+            },
+        )
+        .await
+        .expect_err("a failed refresh must not be reported as a successful update");
+    assert!(matches!(error, AliasError::Provider { status: 503, .. }));
+}
+
+#[tokio::test]
+async fn keeps_concurrent_pagination_results_bound_to_the_requested_page() {
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/v2/aliases"))
+        .and(matchers::query_param("page_id", "0"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(30))
+                .set_body_json(json!({"aliases": [alias_json(98, true)]})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/v2/aliases"))
+        .and(matchers::query_param("page_id", "1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"aliases": [alias_json(99, true)]})),
+        )
+        .mount(&server)
+        .await;
+
+    let client = client(&server);
+    let (first, second) = tokio::join!(
+        client.list_aliases(ListAliasesRequest {
+            page: 0,
+            filter: None,
+        }),
+        client.list_aliases(ListAliasesRequest {
+            page: 1,
+            filter: None,
+        })
+    );
+    let first = first.expect("first page should succeed");
+    let second = second.expect("second page should succeed");
+    assert_eq!((first.page, first.aliases[0].id), (0, AliasId(98)));
+    assert_eq!((second.page, second.aliases[0].id), (1, AliasId(99)));
+}
+
+#[tokio::test]
+async fn bounds_chunked_success_and_error_bodies_without_trusting_content_length() {
+    for (status, limit) in [(200, 512 * 1024), (500, 16 * 1024)] {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("raw server should bind");
+        let address = listener
+            .local_addr()
+            .expect("raw server should have an address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("raw server should accept");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            let headers = format!(
+                "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            );
+            stream
+                .write_all(headers.as_bytes())
+                .expect("raw headers should write");
+            let chunk = vec![b'x'; 4096];
+            for _ in 0..=(limit / chunk.len()) {
+                if write!(stream, "{:x}\r\n", chunk.len()).is_err()
+                    || stream.write_all(&chunk).is_err()
+                    || stream.write_all(b"\r\n").is_err()
+                {
+                    break;
+                }
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        });
+        let error = AliasClient::new(
+            AliasClientSettings::new(SensitiveString::from(TOKEN))
+                .with_base_url(format!("http://{address}/")),
+        )
+        .expect("raw server URL should be valid")
+        .list_domains()
+        .await
+        .expect_err("chunked oversized body must fail");
+        assert!(matches!(
+            error,
+            AliasError::ResponseTooLarge { limit_bytes } if limit_bytes == limit
+        ));
+        server.join().expect("raw server should finish");
+    }
+}
+
+#[tokio::test]
+async fn strips_urls_and_secrets_from_transport_error_display_and_debug() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("ephemeral port should bind");
+    let address = listener
+        .local_addr()
+        .expect("listener should have an address");
+    drop(listener);
+    let path_secret = "sensitive-instance-path";
+    let hostname_secret = SensitiveString::from("private-hostname.example");
+    let token = "transport-secret-token";
+    let error = AliasClient::new(
+        AliasClientSettings::new(SensitiveString::from(token))
+            .with_base_url(format!("http://{address}/{path_secret}/")),
+    )
+    .expect("transport test client should be valid")
+    .get_alias_options(Some(&hostname_secret))
+    .await
+    .expect_err("closed port should fail");
+    for rendered in [error.to_string(), format!("{error:?}")] {
+        assert!(!rendered.contains(token));
+        assert!(!rendered.contains(path_secret));
+        assert!(!rendered.contains(hostname_secret.expose()));
+        assert!(!rendered.contains(&format!("http://{address}")));
+    }
+}
+
 #[test]
 fn settings_and_sensitive_models_redact_secrets() {
     let settings = AliasClientSettings::new(SensitiveString::from(TOKEN));
@@ -634,4 +903,20 @@ fn settings_and_sensitive_models_redact_secrets() {
         ),
         Err(AliasError::InvalidAuthenticationToken)
     ));
+
+    for hostile in [
+        "file:///etc/passwd",
+        "https://user@example.test/",
+        "https://example.test/?token=secret",
+        "https://example.test/#secret",
+        "//example.test/",
+    ] {
+        assert!(matches!(
+            AliasClient::new(
+                AliasClientSettings::new(SensitiveString::from(TOKEN))
+                    .with_base_url(hostile.to_owned())
+            ),
+            Err(AliasError::InvalidBaseUrl(_))
+        ));
+    }
 }

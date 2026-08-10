@@ -11,9 +11,14 @@ use bitwarden_alias::{
 };
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 
+// The disposable account has production rate limits. Keep independent lifecycle cases from
+// racing each other's creation requests while retaining concurrency inside the state test.
+static LIVE_ACCOUNT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 #[ignore = "requires a disposable SimpleLogin server and API token"]
 async fn complete_lifecycle_against_real_simplelogin() {
+    let _account_guard = LIVE_ACCOUNT_LOCK.lock().await;
     let api_url = std::env::var("SIMPLELOGIN_API_URL")
         .expect("SIMPLELOGIN_API_URL must point at the disposable SimpleLogin checkout");
     let api_token = std::env::var("SIMPLELOGIN_API_TOKEN")
@@ -184,6 +189,68 @@ async fn complete_lifecycle_against_real_simplelogin() {
 
     delete_alias(&client, custom.id).await;
     delete_alias(&client, random_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable SimpleLogin server and API token"]
+async fn concurrent_explicit_state_is_idempotent_against_real_simplelogin() {
+    let _account_guard = LIVE_ACCOUNT_LOCK.lock().await;
+    let api_url = std::env::var("SIMPLELOGIN_API_URL")
+        .expect("SIMPLELOGIN_API_URL must point at the disposable SimpleLogin checkout");
+    let api_token = std::env::var("SIMPLELOGIN_API_TOKEN")
+        .expect("SIMPLELOGIN_API_TOKEN must belong to the disposable SimpleLogin account");
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should follow the Unix epoch")
+        .as_nanos();
+    let first = AliasClient::new(
+        AliasClientSettings::new(SensitiveString::from(api_token.clone()))
+            .with_base_url(api_url.clone()),
+    )
+    .expect("first live SimpleLogin client should be constructible");
+    let second = AliasClient::new(
+        AliasClientSettings::new(SensitiveString::from(api_token)).with_base_url(api_url),
+    )
+    .expect("second live SimpleLogin client should be constructible");
+
+    let alias = first
+        .create_random_alias(CreateRandomAliasRequest {
+            note: Some(SensitiveString::from(format!(
+                "concurrent-sdk-live-{unique}"
+            ))),
+            ..CreateRandomAliasRequest::default()
+        })
+        .await
+        .expect("real concurrent-state alias creation should succeed");
+    let alias_id = alias.id;
+
+    let (first_result, second_result) = tokio::join!(
+        first.disable_alias(alias_id),
+        second.disable_alias(alias_id)
+    );
+    let final_detail = first.get_alias(alias_id).await;
+    let cleanup = first.delete_alias(alias_id).await;
+
+    assert!(
+        !first_result
+            .expect("first real disable should succeed")
+            .enabled
+    );
+    assert!(
+        !second_result
+            .expect("second real disable should be idempotent")
+            .enabled
+    );
+    assert!(
+        !final_detail
+            .expect("real alias detail should remain readable")
+            .enabled
+    );
+    assert!(
+        cleanup
+            .expect("real concurrent alias cleanup should succeed")
+            .deleted
+    );
 }
 
 async fn delete_alias(client: &AliasClient, alias_id: AliasId) {
