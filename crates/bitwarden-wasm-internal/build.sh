@@ -6,10 +6,6 @@ cd "$(dirname "$0")"
 # Move to the root of the repository
 cd ../../
 
-# Write VERSION file
-git rev-parse HEAD > ./crates/bitwarden-wasm-internal/npm/VERSION
-
-
 # Parse flags
 ENABLE_LICENSE_FEATURE=""
 NPM_FOLDER="npm"
@@ -30,6 +26,19 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# Bind every generated package, including the separately licensed package, to its source state.
+# Debug artifacts remain usable from a development checkout but cannot masquerade as a clean
+# commit. Release artifacts must be reproducible from committed source.
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  if [[ -n "$RELEASE_FLAG" ]]; then
+    echo "Refusing to build a release artifact from a dirty worktree" >&2
+    exit 1
+  fi
+  SOURCE_COMMIT="${SOURCE_COMMIT}-dirty"
+fi
+printf '%s\n' "$SOURCE_COMMIT" > "./crates/bitwarden-wasm-internal/${NPM_FOLDER}/VERSION"
 
 if [ -n "$RELEASE_FLAG" ]; then
   echo "Building in release mode"
