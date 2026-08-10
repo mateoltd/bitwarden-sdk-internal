@@ -34,6 +34,12 @@ pub struct RegisterSendVerificationEmailRequestModel {
         skip_serializing_if = "Option::is_none"
     )]
     pub from_marketing: Option<String>,
+    #[serde(
+        rename = "sealedOpenOrgInviteData",
+        alias = "SealedOpenOrgInviteData",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sealed_open_org_invite_data: Option<String>,
 }
 
 impl RegisterSendVerificationEmailRequestModel {
@@ -43,6 +49,7 @@ impl RegisterSendVerificationEmailRequestModel {
             email,
             receive_marketing_emails: None,
             from_marketing: None,
+            sealed_open_org_invite_data: None,
         }
     }
 }
