@@ -309,4 +309,25 @@ mod tests {
         assert!(!rendered.contains(HOSTNAME));
         assert!(!rendered.contains("private-provider-path"));
     }
+
+    #[cfg(not(feature = "alias"))]
+    #[tokio::test]
+    #[ignore = "requires the real SimpleLogin integration lab"]
+    async fn test_real_simplelogin_service() {
+        let api_url = std::env::var("SIMPLELOGIN_REAL_BASE_URL")
+            .expect("SIMPLELOGIN_REAL_BASE_URL must be set by the integration lab");
+        let api_key = std::env::var("SIMPLELOGIN_REAL_API_KEY")
+            .expect("SIMPLELOGIN_REAL_API_KEY must be set by the integration lab");
+        let website = std::env::var("SIMPLELOGIN_REAL_WEBSITE")
+            .expect("SIMPLELOGIN_REAL_WEBSITE must be set by the integration lab");
+        let expected_alias = std::env::var("SIMPLELOGIN_REAL_EXPECTED_ALIAS")
+            .expect("SIMPLELOGIN_REAL_EXPECTED_ALIAS must be set by the integration lab");
+
+        let address =
+            super::generate_with_api_url(&new_http_client(), api_key, api_url, Some(website))
+                .await
+                .expect("the real SimpleLogin service should create an alias");
+
+        assert_eq!(address, expected_alias);
+    }
 }
