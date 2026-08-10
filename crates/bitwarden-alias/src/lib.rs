@@ -3,6 +3,7 @@
 mod client;
 mod error;
 mod models;
+mod reconciliation;
 
 #[cfg(test)]
 mod tests;
@@ -10,3 +11,4 @@ mod tests;
 pub use client::{AliasClient, AliasClientExt, AliasClientSettings, SIMPLELOGIN_DEFAULT_BASE_URL};
 pub use error::AliasError;
 pub use models::*;
+pub use reconciliation::*;
