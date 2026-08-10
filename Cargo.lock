@@ -481,6 +481,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "bitwarden-alias"
+version = "3.0.0"
+dependencies = [
+ "bitwarden-api-base",
+ "bitwarden-core",
+ "bitwarden-sensitive-value",
+ "http",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "bitwarden-api-api"
 version = "3.0.0"
 dependencies = [

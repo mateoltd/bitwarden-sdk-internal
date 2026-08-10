@@ -1,0 +1,30 @@
+[package]
+name = "bitwarden-alias"
+description = "GPL-only alias lifecycle support for the Bitwarden SDK."
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license = "GPL-3.0-only"
+readme = "README.md"
+keywords.workspace = true
+
+[dependencies]
+bitwarden-api-base = { workspace = true }
+bitwarden-core = { workspace = true }
+bitwarden-sensitive-value = { workspace = true }
+http = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true
