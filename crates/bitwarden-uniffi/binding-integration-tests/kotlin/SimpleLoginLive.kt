@@ -5,9 +5,9 @@ import uniffi.bitwarden_alias.ContactId
 import uniffi.bitwarden_alias.CreateCustomAliasRequest
 import uniffi.bitwarden_alias.CreateRandomAliasRequest
 import uniffi.bitwarden_alias.SearchAliasesRequest
-import uniffi.bitwarden_uniffi.AliasClient
-import uniffi.bitwarden_uniffi.AliasUpdateRequest
-import uniffi.bitwarden_uniffi.OptionalSensitiveStringUpdate
+import com.bitwarden.sdk.AliasClient
+import com.bitwarden.sdk.AliasUpdateRequest
+import com.bitwarden.sdk.OptionalSensitiveStringUpdate
 import java.util.UUID
 
 fun main() = runBlocking {

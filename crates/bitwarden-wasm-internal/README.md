@@ -36,3 +36,11 @@ brew install binaryen
 # release with commercial license
 ./build.sh -r -b
 ```
+
+The build without `-b` is the GPL/OSS package. It fails before compilation if Cargo resolves any
+commercial-only SDK crate and validates the generated npm package's license, paths, and exports
+after compilation. You can rerun that validation independently from the repository root:
+
+```bash
+scripts/check-oss-artifact-boundary.sh --wasm crates/bitwarden-wasm-internal/npm
+```
