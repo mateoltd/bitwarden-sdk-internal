@@ -15,11 +15,11 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
 use crate::{
-    Alias, AliasCreationOptions, AliasDomain, AliasError, AliasId, AliasPage, AliasRecommendation,
-    AliasState, ContactId, ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest,
-    CustomDomain, CustomDomainId, DeleteAliasResult, DeleteContactResult, ListAliasesRequest,
-    Mailbox, ReverseAlias, ReverseAliasPage, SearchAliasesRequest, UpdateAliasRequest,
-    UpdateCustomDomainRequest,
+    Alias, AliasCreationOptions, AliasDomain, AliasError, AliasId, AliasPage,
+    AliasProviderIdentity, AliasRecommendation, AliasReference, AliasState, ContactId,
+    ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
+    DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, ReverseAlias,
+    ReverseAliasPage, SearchAliasesRequest, UpdateAliasRequest, UpdateCustomDomainRequest,
 };
 
 /// Default SimpleLogin service base URL.
@@ -87,6 +87,16 @@ impl AliasClient {
                 api_token: settings.api_token,
             }),
         })
+    }
+
+    /// Returns the stable provider identity used to namespace vault alias references.
+    pub fn provider_identity(&self) -> AliasProviderIdentity {
+        AliasProviderIdentity::from_simplelogin_url(&self.inner.base_url)
+    }
+
+    /// Creates a versioned vault reference for alias data returned by this client.
+    pub fn alias_reference(&self, alias: &Alias) -> AliasReference {
+        AliasReference::new(&self.provider_identity(), alias)
     }
 
     /// Creates a random alias and returns its stable identity and full lifecycle data.

@@ -28,6 +28,7 @@ wasm = [
 bitwarden-api-base = { workspace = true }
 bitwarden-core = { workspace = true }
 bitwarden-sensitive-value = { workspace = true }
+bitwarden-vault = { workspace = true }
 http = { workspace = true }
 js-sys = { workspace = true, optional = true }
 reqwest = { workspace = true }

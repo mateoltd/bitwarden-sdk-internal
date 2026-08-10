@@ -487,6 +487,7 @@ dependencies = [
  "bitwarden-api-base",
  "bitwarden-core",
  "bitwarden-sensitive-value",
+ "bitwarden-vault",
  "http",
  "js-sys",
  "reqwest",
