@@ -24,6 +24,7 @@ dangerous-crypto-debug = ["bitwarden-core/dangerous-crypto-debug"]
 
 [dependencies]
 async-trait = { workspace = true }
+bitwarden-alias = { workspace = true, features = ["uniffi"] }
 bitwarden-auth = { workspace = true, features = ["uniffi"] }
 bitwarden-collections = { workspace = true, features = ["uniffi"] }
 bitwarden-core = { workspace = true, features = ["uniffi"] }
@@ -39,6 +40,7 @@ bitwarden-pm = { workspace = true, features = ["uniffi"] }
 bitwarden-policies = { workspace = true, features = ["uniffi"] }
 bitwarden-random = { workspace = true, features = ["uniffi"] }
 bitwarden-send = { workspace = true, features = ["uniffi"] }
+bitwarden-sensitive-value = { workspace = true, features = ["uniffi"] }
 bitwarden-server-communication-config = { workspace = true, features = ["uniffi"] }
 bitwarden-ssh = { workspace = true, features = ["uniffi"] }
 bitwarden-state = { workspace = true, features = ["uniffi"] }

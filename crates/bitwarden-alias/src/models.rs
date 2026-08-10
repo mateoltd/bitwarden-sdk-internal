@@ -1,12 +1,21 @@
 use bitwarden_sensitive_value::SensitiveString;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "wasm")]
+use tsify::Tsify;
 
 macro_rules! numeric_id {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
+        #[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints))]
         #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
         #[serde(transparent)]
         pub struct $name(pub u64);
+
+        #[cfg(feature = "uniffi")]
+        uniffi::custom_type!($name, u64, {
+            try_lift: |value| Ok(Self(value)),
+            lower: |value| value.0,
+        });
 
         impl From<u64> for $name {
             fn from(value: u64) -> Self {
@@ -37,6 +46,12 @@ numeric_id!(
 );
 
 /// A mailbox to which an alias forwards messages.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MailboxRef {
     /// Stable mailbox identifier.
@@ -46,6 +61,12 @@ pub struct MailboxRef {
 }
 
 /// A mailbox available to the authenticated SimpleLogin account.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Mailbox {
     /// Stable mailbox identifier.
@@ -67,6 +88,12 @@ pub struct Mailbox {
 }
 
 /// The contact attached to an alias's latest activity.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LatestActivityContact {
     /// Contact email address.
@@ -78,6 +105,12 @@ pub struct LatestActivityContact {
 }
 
 /// Most recent activity recorded for an alias.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LatestAliasActivity {
     /// Activity time as Unix seconds.
@@ -89,6 +122,12 @@ pub struct LatestAliasActivity {
 }
 
 /// Complete SimpleLogin alias lifecycle data.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Alias {
     /// Stable alias identifier. Use this for every mutation rather than the mutable address data.
@@ -128,7 +167,13 @@ pub struct Alias {
 }
 
 /// Random alias generation scheme.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RandomAliasMode {
     /// Generate a word-based alias.
     Word,
@@ -146,7 +191,13 @@ impl RandomAliasMode {
 }
 
 /// Input for random alias creation.
-#[derive(Debug, Default)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct CreateRandomAliasRequest {
     /// Optional site hostname associated with the alias.
     pub hostname: Option<SensitiveString>,
@@ -157,7 +208,13 @@ pub struct CreateRandomAliasRequest {
 }
 
 /// Input for custom alias creation using a signed suffix returned by [`AliasCreationOptions`].
-#[derive(Debug)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CreateCustomAliasRequest {
     /// Alias prefix, without the suffix.
     pub alias_prefix: String,
@@ -174,7 +231,13 @@ pub struct CreateCustomAliasRequest {
 }
 
 /// Filter applied by the SimpleLogin alias list endpoint.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AliasFilter {
     /// Return enabled aliases.
     Enabled,
@@ -195,7 +258,13 @@ impl AliasFilter {
 }
 
 /// Input for one page of aliases.
-#[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 pub struct ListAliasesRequest {
     /// Zero-based SimpleLogin page number.
     pub page: u32,
@@ -204,7 +273,13 @@ pub struct ListAliasesRequest {
 }
 
 /// Input for one page of alias search results.
-#[derive(Debug)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SearchAliasesRequest {
     /// Search text matched by SimpleLogin against address, note, and name.
     pub query: SensitiveString,
@@ -215,7 +290,13 @@ pub struct SearchAliasesRequest {
 }
 
 /// A page of aliases.
-#[derive(Debug)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AliasPage {
     /// Zero-based provider page number.
     pub page: u32,
@@ -224,6 +305,12 @@ pub struct AliasPage {
 }
 
 /// An alias recommended for a previously associated hostname.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AliasRecommendation {
     /// Recommended alias address.
@@ -233,6 +320,12 @@ pub struct AliasRecommendation {
 }
 
 /// One custom-alias suffix and the short-lived value that authorizes its use.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AliasSuffix {
     /// Human-readable suffix.
@@ -246,6 +339,12 @@ pub struct AliasSuffix {
 }
 
 /// Alias creation options and any recommendation for a hostname.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AliasCreationOptions {
     /// Whether the account may create another alias.
@@ -259,7 +358,13 @@ pub struct AliasCreationOptions {
 }
 
 /// Alias fields that can be updated.
-#[derive(Debug, Default, Serialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct UpdateAliasRequest {
     /// Set or clear the private note. `None` leaves it unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,7 +394,13 @@ impl UpdateAliasRequest {
 }
 
 /// Result of explicitly enabling or disabling an alias.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AliasState {
     /// Stable alias identifier.
     pub id: AliasId,
@@ -298,7 +409,13 @@ pub struct AliasState {
 }
 
 /// Result of deleting an alias.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DeleteAliasResult {
     /// Stable identifier of the deleted alias.
     pub id: AliasId,
@@ -307,6 +424,12 @@ pub struct DeleteAliasResult {
 }
 
 /// A domain available for random alias generation.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AliasDomain {
     /// Domain name.
@@ -316,6 +439,12 @@ pub struct AliasDomain {
 }
 
 /// A SimpleLogin custom domain.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CustomDomain {
     /// Stable custom-domain identifier.
@@ -341,7 +470,13 @@ pub struct CustomDomain {
 }
 
 /// Mutable custom-domain settings.
-#[derive(Debug, Default, Serialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct UpdateCustomDomainRequest {
     /// Enable or disable catch-all alias creation.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -367,6 +502,12 @@ impl UpdateCustomDomainRequest {
 }
 
 /// A contact and the reverse alias SimpleLogin assigned to it.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ReverseAlias {
     /// Stable contact identifier.
@@ -393,7 +534,13 @@ pub struct ReverseAlias {
 }
 
 /// A page of contacts and reverse aliases.
-#[derive(Debug)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ReverseAliasPage {
     /// Stable alias owning the contacts.
     pub alias_id: AliasId,
@@ -404,7 +551,13 @@ pub struct ReverseAliasPage {
 }
 
 /// Result of toggling contact blocking.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContactState {
     /// Stable contact identifier.
     pub id: ContactId,
@@ -413,7 +566,13 @@ pub struct ContactState {
 }
 
 /// Result of deleting a contact.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    feature = "wasm",
+    derive(Tsify),
+    tsify(into_wasm_abi, from_wasm_abi, large_number_types_as_bigints)
+)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DeleteContactResult {
     /// Stable identifier of the deleted contact.
     pub id: ContactId,

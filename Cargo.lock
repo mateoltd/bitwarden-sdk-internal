@@ -488,12 +488,18 @@ dependencies = [
  "bitwarden-core",
  "bitwarden-sensitive-value",
  "http",
+ "js-sys",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tsify",
+ "uniffi",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wiremock",
 ]
 
@@ -1378,6 +1384,7 @@ name = "bitwarden-uniffi"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitwarden-alias",
  "bitwarden-auth",
  "bitwarden-collections",
  "bitwarden-core",
@@ -1393,6 +1400,7 @@ dependencies = [
  "bitwarden-policies",
  "bitwarden-random",
  "bitwarden-send",
+ "bitwarden-sensitive-value",
  "bitwarden-server-communication-config",
  "bitwarden-ssh",
  "bitwarden-state",
@@ -1533,6 +1541,7 @@ name = "bitwarden-wasm-internal"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitwarden-alias",
  "bitwarden-commercial-vault",
  "bitwarden-core",
  "bitwarden-crypto",
@@ -1546,6 +1555,7 @@ dependencies = [
  "bitwarden-policies",
  "bitwarden-random",
  "bitwarden-send",
+ "bitwarden-sensitive-value",
  "bitwarden-server-communication-config",
  "bitwarden-shared-unlock",
  "bitwarden-ssh",
