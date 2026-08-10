@@ -3,6 +3,21 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
 
+pub(crate) const MAX_EMAIL_ADDRESS_BYTES: usize = 320;
+
+pub(crate) fn is_safe_email_address(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && value.len() <= MAX_EMAIL_ADDRESS_BYTES
+        && !value.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || matches!(character, '<' | '>')
+        })
+}
+
 macro_rules! numeric_id {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]

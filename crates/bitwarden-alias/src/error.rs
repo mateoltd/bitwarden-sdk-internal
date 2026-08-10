@@ -30,12 +30,42 @@ pub enum AliasError {
         retry_after_seconds: Option<u64>,
     },
     /// The provider returned an unsuccessful response.
-    #[error("alias provider request failed (HTTP {status}): {message}")]
+    ///
+    /// Provider-controlled response text is deliberately omitted because it can reflect API keys,
+    /// alias inputs, or terminal control sequences into application logs.
+    #[error("alias provider request failed (HTTP {status})")]
     Provider {
         /// HTTP response status.
         status: u16,
-        /// Bounded, sanitized provider error message.
-        message: String,
+    },
+    /// A lifecycle mutation was dispatched, but a transport failure made its final state unknown.
+    /// Callers must reconcile state instead of blindly replaying the operation.
+    #[error("alias provider {operation} outcome is unknown after a transport failure")]
+    MutationOutcomeUnknown {
+        /// Safe operation label containing no provider or user data.
+        operation: &'static str,
+    },
+    /// The provider confirmed a mutation, but the SDK could not refresh the resulting resource.
+    /// Replaying the mutation is unsafe; callers should retry only the corresponding read.
+    #[error("alias provider {operation} succeeded, but its result could not be refreshed")]
+    MutationCommittedButRefreshFailed {
+        /// Safe operation label containing no provider or user data.
+        operation: &'static str,
+    },
+    /// The provider returned success for a mutation, but its response could not be validated.
+    /// The operation may have committed and must be reconciled instead of replayed.
+    #[error("alias provider {operation} returned an invalid response after reporting success")]
+    MutationResponseInvalid {
+        /// Safe operation label containing no provider or user data.
+        operation: &'static str,
+    },
+    /// Concurrent actors prevented a toggle-only API from converging on the requested state.
+    #[error(
+        "alias provider {operation} did not converge because the resource changed concurrently"
+    )]
+    ConcurrentMutation {
+        /// Safe operation label containing no provider or user data.
+        operation: &'static str,
     },
     /// A provider response exceeded the SDK limit.
     #[error("alias provider response exceeded the {limit_bytes}-byte limit")]

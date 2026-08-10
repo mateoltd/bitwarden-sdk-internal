@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
-use crate::{Alias, AliasId};
+use crate::{Alias, AliasId, is_safe_email_address};
 
 /// Current schema version stored in vault alias-reference fields.
 pub const ALIAS_REFERENCE_VERSION: u32 = 1;
@@ -180,6 +180,9 @@ impl AliasReference {
         if field.r#type != FieldType::Hidden {
             return Err(AliasReferenceError::FieldMustBeHidden);
         }
+        if field.linked_id.is_some() {
+            return Err(AliasReferenceError::FieldMustNotBeLinked);
+        }
         let value = field
             .value
             .as_deref()
@@ -215,11 +218,11 @@ impl AliasReference {
                 "alias identifier must be non-zero",
             ));
         }
-        // EXPOSE: validation only checks whether the sensitive address is empty and never renders
-        // or logs it.
-        if self.address.expose().is_empty() {
+        // EXPOSE: validation checks only the sensitive address's shape and never renders or logs
+        // it.
+        if !is_safe_email_address(self.address.expose()) {
             return Err(AliasReferenceError::InvalidValue(
-                "alias address must not be empty",
+                "alias address must be a bounded email address without whitespace or control characters",
             ));
         }
         let canonical = canonical_provider_url(&self.provider_instance)?;
@@ -259,6 +262,9 @@ pub enum AliasReferenceError {
     /// The reserved field must stay hidden so vault clients do not casually render metadata.
     #[error("vault alias reference field must be hidden")]
     FieldMustBeHidden,
+    /// A reserved hidden field cannot also point at a linked vault property.
+    #[error("vault alias reference field must not have a linked identifier")]
+    FieldMustNotBeLinked,
     /// The reserved reference field had no value.
     #[error("vault alias reference field has no value")]
     MissingValue,
@@ -283,6 +289,8 @@ pub enum AliasReconciliationSkipReason {
     DuplicateReferenceFields,
     /// The reserved field was not hidden.
     ReferenceFieldNotHidden,
+    /// The reserved hidden field also carried a linked-field identifier.
+    ReferenceFieldHasLinkedId,
     /// The reserved field had no value.
     MissingReferenceValue,
     /// The reference exceeded its strict size limit.
@@ -901,6 +909,9 @@ fn skip_reason(error: &AliasReferenceError) -> AliasReconciliationSkipReason {
         AliasReferenceError::FieldMustBeHidden => {
             AliasReconciliationSkipReason::ReferenceFieldNotHidden
         }
+        AliasReferenceError::FieldMustNotBeLinked => {
+            AliasReconciliationSkipReason::ReferenceFieldHasLinkedId
+        }
         AliasReferenceError::MissingValue => AliasReconciliationSkipReason::MissingReferenceValue,
         AliasReferenceError::NotLoginCipher => AliasReconciliationSkipReason::NonLoginCipher,
         AliasReferenceError::InvalidProviderInstance(_) | AliasReferenceError::InvalidValue(_) => {
@@ -961,7 +972,8 @@ fn write_reference(
     let field_changed = if let Some(index) = reference_indices.first().copied() {
         let field = &mut fields[index];
         let changed = field.r#type != FieldType::Hidden
-            || field.value.as_deref() != Some(encoded_reference.as_str());
+            || field.value.as_deref() != Some(encoded_reference.as_str())
+            || field.linked_id.is_some();
         field.r#type = FieldType::Hidden;
         field.linked_id = None;
         field.value = Some(encoded_reference);
@@ -1093,6 +1105,46 @@ mod tests {
             AliasReference::decode(&oversized),
             Err(AliasReferenceError::TooLarge { .. })
         ));
+
+        let mut unsafe_address = AliasReference::new(&provider, &alias);
+        unsafe_address.address =
+            SensitiveString::from("alias@example.test\nlinked-field-injection");
+        assert!(matches!(
+            unsafe_address.encode(),
+            Err(AliasReferenceError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
+    fn adversarial_reference_addresses_never_panic_or_echo_input() {
+        let provider = provider();
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for sample in 0..4096_u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let length = (state as usize) % 96;
+            let mut address = format!("sensitive-marker-{sample:04x}-");
+            address.reserve(length);
+            for index in 0..length {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(sample ^ index as u64);
+                address.push((state as u8 & 0x7f) as char);
+            }
+            let encoded = serde_json::json!({
+                "version": ALIAS_REFERENCE_VERSION,
+                "provider": "simplelogin",
+                "providerInstance": provider.instance.clone(),
+                "aliasId": sample + 1,
+                "address": address.clone(),
+            })
+            .to_string();
+            if let Err(error) = AliasReference::decode(&encoded) {
+                let rendered = format!("{error:?} {error}");
+                assert!(!rendered.contains(&address));
+            }
+        }
     }
 
     #[test]
@@ -1230,6 +1282,20 @@ mod tests {
             .expose_owned();
         attach_raw_reference(&mut visible, encoded, FieldType::Text);
 
+        let mut linked = login_cipher(Some(CipherId::new_v4()), None);
+        let encoded = AliasReference::new(&provider, &aliases[0])
+            .encode()
+            .expect("reference should encode")
+            .expose_owned();
+        attach_raw_reference(&mut linked, encoded, FieldType::Hidden);
+        let linked_id = serde_json::from_value(serde_json::json!(100))
+            .expect("username linked ID should deserialize");
+        linked
+            .fields
+            .as_mut()
+            .expect("linked fixture should have fields")[0]
+            .linked_id = Some(linked_id);
+
         let foreign_provider =
             AliasProviderIdentity::simplelogin("https://other.example.test").expect("valid URL");
         let mut foreign = login_cipher(Some(CipherId::new_v4()), None);
@@ -1245,11 +1311,13 @@ mod tests {
         non_login.login = None;
 
         let missing_id = login_cipher(None, Some("eight@example.test".to_owned()));
-        let ciphers = vec![malformed, future, visible, foreign, non_login, missing_id];
+        let ciphers = vec![
+            malformed, future, visible, linked, foreign, non_login, missing_id,
+        ];
         let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
             .expect("unsafe references should be reported, not fatal");
 
-        assert_eq!(plan.summary.skipped_ciphers, 6);
+        assert_eq!(plan.summary.skipped_ciphers, 7);
         assert_eq!(plan.summary.unbound_aliases, 1);
         assert!(plan.actions.is_empty());
         let rendered = plan
@@ -1258,6 +1326,13 @@ mod tests {
             .map(|outcome| format!("{outcome:?}"))
             .collect::<String>();
         assert!(!rendered.contains("do-not-render"));
+        assert!(plan.outcomes.iter().any(|outcome| matches!(
+            outcome,
+            AliasReconciliationOutcome::SkippedCipher {
+                reason: AliasReconciliationSkipReason::ReferenceFieldHasLinkedId,
+                ..
+            }
+        )));
     }
 
     #[test]

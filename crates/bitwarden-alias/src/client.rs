@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 
@@ -11,7 +12,7 @@ use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 #[cfg(feature = "wasm")]
 use tsify::Tsify;
-use url::Url;
+use url::{Host, Url};
 #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
 use wasm_bindgen::{JsCast, JsValue};
 #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
@@ -23,6 +24,7 @@ use crate::{
     ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
     DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, ReverseAlias,
     ReverseAliasPage, SearchAliasesRequest, UpdateAliasRequest, UpdateCustomDomainRequest,
+    is_safe_email_address,
 };
 
 /// Default SimpleLogin service base URL.
@@ -30,7 +32,15 @@ pub const SIMPLELOGIN_DEFAULT_BASE_URL: &str = "https://app.simplelogin.io/";
 
 const MAX_SUCCESS_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_ERROR_RESPONSE_BYTES: usize = 16 * 1024;
-const MAX_RENDERED_ERROR_CHARS: usize = 512;
+const MAX_MAILBOX_IDS: usize = 20;
+const MAX_TOGGLE_CONVERGENCE_ATTEMPTS: usize = 3;
+const MAX_ALIAS_PREFIX_BYTES: usize = 40;
+const MAX_HOSTNAME_BYTES: usize = 253;
+const MAX_NAME_BYTES: usize = 128;
+const MAX_NOTE_BYTES: usize = 16 * 1024;
+const MAX_SEARCH_QUERY_BYTES: usize = 4 * 1024;
+const MAX_SIGNED_SUFFIX_BYTES: usize = 4 * 1024;
+const MAX_PROVIDER_DATE_BYTES: usize = 128;
 
 type AliasStateLocks = Mutex<HashMap<(String, AliasId), Weak<tokio::sync::Mutex<()>>>>;
 
@@ -41,13 +51,23 @@ static ALIAS_STATE_LOCKS: OnceLock<AliasStateLocks> = OnceLock::new();
 
 /// Configuration used to connect an [`AliasClient`] to SimpleLogin.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
-#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(from_wasm_abi))]
+#[derive(Deserialize)]
 pub struct AliasClientSettings {
     /// SimpleLogin base URL, without an API path.
     pub base_url: String,
     /// SimpleLogin API key sent in the `Authentication` header.
     pub api_token: SensitiveString,
+}
+
+impl fmt::Debug for AliasClientSettings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AliasClientSettings")
+            .field("base_url", &"[REDACTED]")
+            .field("api_token", &self.api_token)
+            .finish()
+    }
 }
 
 impl AliasClientSettings {
@@ -118,6 +138,13 @@ impl AliasClient {
         &self,
         request: CreateRandomAliasRequest,
     ) -> Result<Alias, AliasError> {
+        validate_optional_hostname(request.hostname.as_ref())?;
+        validate_optional_sensitive_length(
+            request.note.as_ref(),
+            MAX_NOTE_BYTES,
+            "alias note is too large",
+        )?;
+
         #[derive(Serialize)]
         struct Body<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,8 +165,10 @@ impl AliasClient {
             .json(&Body {
                 note: request.note.as_ref(),
             });
-        let alias = self.send_json(builder).await?;
-        validate_alias(&alias)?;
+        let alias = self
+            .send_json(builder, Some("random-alias creation"))
+            .await?;
+        validate_mutation_response(validate_alias(&alias), "random-alias creation")?;
         Ok(alias)
     }
 
@@ -148,16 +177,16 @@ impl AliasClient {
         &self,
         request: CreateCustomAliasRequest,
     ) -> Result<Alias, AliasError> {
-        if request.mailbox_ids.is_empty() {
-            return Err(AliasError::InvalidRequest(
-                "custom alias creation requires at least one mailbox",
-            ));
-        }
-        if request.mailbox_ids.iter().any(|id| id.0 == 0) {
-            return Err(AliasError::InvalidRequest(
-                "mailbox identifiers must be non-zero",
-            ));
-        }
+        validate_request_mailbox_ids(&request.mailbox_ids)?;
+        validate_alias_prefix(&request.alias_prefix)?;
+        validate_signed_suffix(&request.signed_suffix)?;
+        validate_optional_hostname(request.hostname.as_ref())?;
+        validate_optional_sensitive_length(
+            request.note.as_ref(),
+            MAX_NOTE_BYTES,
+            "alias note is too large",
+        )?;
+        validate_optional_name(request.name.as_ref(), "alias name is invalid or too large")?;
 
         #[derive(Serialize)]
         struct Body<'a> {
@@ -184,8 +213,10 @@ impl AliasClient {
                 note: request.note.as_ref(),
                 name: request.name.as_ref(),
             });
-        let alias = self.send_json(builder).await?;
-        validate_alias(&alias)?;
+        let alias = self
+            .send_json(builder, Some("custom-alias creation"))
+            .await?;
+        validate_mutation_response(validate_alias(&alias), "custom-alias creation")?;
         Ok(alias)
     }
 
@@ -194,6 +225,7 @@ impl AliasClient {
         &self,
         hostname: Option<&SensitiveString>,
     ) -> Result<AliasCreationOptions, AliasError> {
+        validate_optional_hostname(hostname)?;
         let mut query = Vec::new();
         if let Some(hostname) = hostname {
             query.push(("hostname", hostname.expose().as_str()));
@@ -201,7 +233,9 @@ impl AliasClient {
         let builder = self
             .request(Method::GET, "api/v5/alias/options")?
             .query(&query);
-        self.send_json(builder).await
+        let options = self.send_json(builder, None).await?;
+        validate_alias_options(&options, hostname)?;
+        Ok(options)
     }
 
     /// Gets the most recently associated alias for a hostname, when SimpleLogin recommends one.
@@ -215,7 +249,7 @@ impl AliasClient {
     /// Lists a page of aliases, optionally filtered by lifecycle state.
     pub async fn list_aliases(&self, request: ListAliasesRequest) -> Result<AliasPage, AliasError> {
         let builder = self.alias_list_request(Method::GET, request.page, request.filter)?;
-        let response: AliasesResponse = self.send_json(builder).await?;
+        let response: AliasesResponse = self.send_json(builder, None).await?;
         validate_alias_page(&response.aliases)?;
         Ok(AliasPage {
             page: request.page,
@@ -228,6 +262,11 @@ impl AliasClient {
         &self,
         request: SearchAliasesRequest,
     ) -> Result<AliasPage, AliasError> {
+        validate_sensitive_length(
+            &request.query,
+            MAX_SEARCH_QUERY_BYTES,
+            "alias search query is too large",
+        )?;
         #[derive(Serialize)]
         struct Body<'a> {
             query: &'a SensitiveString,
@@ -238,7 +277,7 @@ impl AliasClient {
             .json(&Body {
                 query: &request.query,
             });
-        let response: AliasesResponse = self.send_json(builder).await?;
+        let response: AliasesResponse = self.send_json(builder, None).await?;
         validate_alias_page(&response.aliases)?;
         Ok(AliasPage {
             page: request.page,
@@ -250,7 +289,7 @@ impl AliasClient {
     pub async fn get_alias(&self, alias_id: AliasId) -> Result<Alias, AliasError> {
         validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let builder = self.request(Method::GET, &format!("api/aliases/{alias_id}"))?;
-        let alias = self.send_json(builder).await?;
+        let alias = self.send_json(builder, None).await?;
         validate_alias(&alias)?;
         if alias.id != alias_id {
             return Err(AliasError::InvalidResponseValue(
@@ -272,25 +311,29 @@ impl AliasClient {
                 "alias update requires at least one field",
             ));
         }
-        if request
-            .mailbox_ids
-            .as_ref()
-            .is_some_and(|ids| ids.is_empty() || ids.iter().any(|id| id.0 == 0))
-        {
-            return Err(AliasError::InvalidRequest(
-                "alias update requires non-zero mailbox identifiers",
-            ));
+        if let Some(mailbox_ids) = request.mailbox_ids.as_ref() {
+            validate_request_mailbox_ids(mailbox_ids)?;
+        }
+        if let Some(Some(note)) = request.note.as_ref() {
+            validate_sensitive_length(note, MAX_NOTE_BYTES, "alias note is too large")?;
+        }
+        if let Some(Some(name)) = request.name.as_ref() {
+            validate_name(name, "alias name is invalid or too large")?;
         }
         let builder = self
             .request(Method::PATCH, &format!("api/aliases/{alias_id}"))?
             .json(&request);
-        let response: OkResponse = self.send_json(builder).await?;
+        let response: OkResponse = self.send_json(builder, Some("alias update")).await?;
         if !response.ok {
-            return Err(AliasError::InvalidResponseValue(
-                "provider did not confirm the alias update",
-            ));
+            return Err(AliasError::MutationResponseInvalid {
+                operation: "alias update",
+            });
         }
-        self.get_alias(alias_id).await
+        self.get_alias(alias_id)
+            .await
+            .map_err(|_| AliasError::MutationCommittedButRefreshFailed {
+                operation: "alias update",
+            })
     }
 
     /// Explicitly enables or disables an alias without accidentally toggling an already-correct
@@ -303,24 +346,27 @@ impl AliasClient {
         validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let state_lock = self.alias_state_lock(alias_id);
         let _guard = state_lock.lock().await;
-        let current = self.get_alias(alias_id).await?;
-        if current.enabled == enabled {
-            return Ok(AliasState {
-                id: alias_id,
-                enabled,
-            });
-        }
+        for _ in 0..MAX_TOGGLE_CONVERGENCE_ATTEMPTS {
+            let current = self.get_alias(alias_id).await?;
+            if current.enabled == enabled {
+                return Ok(AliasState {
+                    id: alias_id,
+                    enabled,
+                });
+            }
 
-        let builder = self.request(Method::POST, &format!("api/aliases/{alias_id}/toggle"))?;
-        let response: ToggleAliasResponse = self.send_json(builder).await?;
-        if response.enabled != enabled {
-            return Err(AliasError::InvalidResponseValue(
-                "provider returned an unexpected alias state",
-            ));
+            let builder = self.request(Method::POST, &format!("api/aliases/{alias_id}/toggle"))?;
+            let response: ToggleAliasResponse =
+                self.send_json(builder, Some("alias state change")).await?;
+            if response.enabled == enabled {
+                return Ok(AliasState {
+                    id: alias_id,
+                    enabled: response.enabled,
+                });
+            }
         }
-        Ok(AliasState {
-            id: alias_id,
-            enabled: response.enabled,
+        Err(AliasError::ConcurrentMutation {
+            operation: "alias state change",
         })
     }
 
@@ -338,7 +384,7 @@ impl AliasClient {
     pub async fn delete_alias(&self, alias_id: AliasId) -> Result<DeleteAliasResult, AliasError> {
         validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let builder = self.request(Method::DELETE, &format!("api/aliases/{alias_id}"))?;
-        let response: DeletedResponse = self.send_json(builder).await?;
+        let response: DeletedResponse = self.send_json(builder, Some("alias deletion")).await?;
         Ok(DeleteAliasResult {
             id: alias_id,
             deleted: response.deleted,
@@ -348,13 +394,13 @@ impl AliasClient {
     /// Lists domains currently available for random alias generation.
     pub async fn list_domains(&self) -> Result<Vec<AliasDomain>, AliasError> {
         let builder = self.request(Method::GET, "api/v2/setting/domains")?;
-        let domains: Vec<AliasDomain> = self.send_json(builder).await?;
+        let domains: Vec<AliasDomain> = self.send_json(builder, None).await?;
         if domains
             .iter()
-            .any(|domain| domain.domain.expose().is_empty())
+            .any(|domain| !is_safe_provider_identifier(domain.domain.expose(), 253))
         {
             return Err(AliasError::InvalidResponseValue(
-                "provider returned an empty alias domain",
+                "provider returned an invalid alias domain",
             ));
         }
         Ok(domains)
@@ -363,7 +409,7 @@ impl AliasClient {
     /// Lists all custom domains owned by the authenticated account.
     pub async fn list_custom_domains(&self) -> Result<Vec<CustomDomain>, AliasError> {
         let builder = self.request(Method::GET, "api/custom_domains")?;
-        let response: CustomDomainsResponse = self.send_json(builder).await?;
+        let response: CustomDomainsResponse = self.send_json(builder, None).await?;
         validate_unique_nonzero_ids(response.custom_domains.iter().map(|domain| domain.id.0))?;
         for domain in &response.custom_domains {
             validate_custom_domain(domain)?;
@@ -383,24 +429,26 @@ impl AliasClient {
                 "custom-domain update requires at least one field",
             ));
         }
-        if request
-            .mailbox_ids
-            .as_ref()
-            .is_some_and(|ids| ids.is_empty() || ids.iter().any(|id| id.0 == 0))
-        {
-            return Err(AliasError::InvalidRequest(
-                "custom-domain update requires non-zero mailbox identifiers",
-            ));
+        if let Some(mailbox_ids) = request.mailbox_ids.as_ref() {
+            validate_request_mailbox_ids(mailbox_ids)?;
+        }
+        if let Some(Some(name)) = request.name.as_ref() {
+            validate_name(name, "custom-domain name is invalid or too large")?;
         }
         let builder = self
             .request(Method::PATCH, &format!("api/custom_domains/{domain_id}"))?
             .json(&request);
-        let response: CustomDomainResponse = self.send_json(builder).await?;
-        validate_custom_domain(&response.custom_domain)?;
+        let response: CustomDomainResponse = self
+            .send_json(builder, Some("custom-domain update"))
+            .await?;
+        validate_mutation_response(
+            validate_custom_domain(&response.custom_domain),
+            "custom-domain update",
+        )?;
         if response.custom_domain.id != domain_id {
-            return Err(AliasError::InvalidResponseValue(
-                "provider returned a different custom-domain identifier",
-            ));
+            return Err(AliasError::MutationResponseInvalid {
+                operation: "custom-domain update",
+            });
         }
         Ok(response.custom_domain)
     }
@@ -408,15 +456,15 @@ impl AliasClient {
     /// Lists all account mailboxes, including unverified mailboxes.
     pub async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, AliasError> {
         let builder = self.request(Method::GET, "api/v2/mailboxes")?;
-        let response: MailboxesResponse = self.send_json(builder).await?;
+        let response: MailboxesResponse = self.send_json(builder, None).await?;
         validate_unique_nonzero_ids(response.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
         if response
             .mailboxes
             .iter()
-            .any(|mailbox| mailbox.email.expose().is_empty())
+            .any(|mailbox| !is_safe_email_address(mailbox.email.expose()))
         {
             return Err(AliasError::InvalidResponseValue(
-                "provider returned an empty mailbox address",
+                "provider returned an invalid mailbox address",
             ));
         }
         Ok(response.mailboxes)
@@ -432,7 +480,7 @@ impl AliasClient {
         let builder = self
             .request(Method::GET, &format!("api/aliases/{alias_id}/contacts"))?
             .query(&[("page_id", page)]);
-        let response: ContactsResponse = self.send_json(builder).await?;
+        let response: ContactsResponse = self.send_json(builder, None).await?;
         validate_reverse_alias_page(&response.contacts)?;
         Ok(ReverseAliasPage {
             alias_id,
@@ -457,6 +505,11 @@ impl AliasClient {
         contact: SensitiveString,
     ) -> Result<ReverseAlias, AliasError> {
         validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
+        if !is_safe_email_address(contact.expose()) {
+            return Err(AliasError::InvalidRequest(
+                "contact must be a bounded email address without whitespace or control characters",
+            ));
+        }
         #[derive(Serialize)]
         struct Body<'a> {
             contact: &'a SensitiveString,
@@ -464,8 +517,8 @@ impl AliasClient {
         let builder = self
             .request(Method::POST, &format!("api/aliases/{alias_id}/contacts"))?
             .json(&Body { contact: &contact });
-        let contact = self.send_json(builder).await?;
-        validate_reverse_alias(&contact)?;
+        let contact = self.send_json(builder, Some("contact creation")).await?;
+        validate_mutation_response(validate_reverse_alias(&contact), "contact creation")?;
         Ok(contact)
     }
 
@@ -485,7 +538,9 @@ impl AliasClient {
     ) -> Result<ContactState, AliasError> {
         validate_request_id(contact_id.0, "contact identifier must be non-zero")?;
         let builder = self.request(Method::POST, &format!("api/contacts/{contact_id}/toggle"))?;
-        let response: ToggleContactResponse = self.send_json(builder).await?;
+        let response: ToggleContactResponse = self
+            .send_json(builder, Some("contact state toggle"))
+            .await?;
         Ok(ContactState {
             id: contact_id,
             block_forward: response.block_forward,
@@ -499,7 +554,7 @@ impl AliasClient {
     ) -> Result<DeleteContactResult, AliasError> {
         validate_request_id(contact_id.0, "contact identifier must be non-zero")?;
         let builder = self.request(Method::DELETE, &format!("api/contacts/{contact_id}"))?;
-        let response: DeletedResponse = self.send_json(builder).await?;
+        let response: DeletedResponse = self.send_json(builder, Some("contact deletion")).await?;
         Ok(DeleteContactResult {
             id: contact_id,
             deleted: response.deleted,
@@ -561,11 +616,12 @@ impl AliasClient {
     async fn send_json<T: DeserializeOwned>(
         &self,
         builder: reqwest::RequestBuilder,
+        mutation: Option<&'static str>,
     ) -> Result<T, AliasError> {
         let response = builder
             .send()
             .await
-            .map_err(|error| AliasError::Transport(error.without_url()))?;
+            .map_err(|error| transport_error(error, mutation))?;
         let status = response.status();
 
         if status.is_redirection() {
@@ -580,7 +636,7 @@ impl AliasClient {
                 .get(header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse().ok());
-            let body = read_bounded(response, MAX_ERROR_RESPONSE_BYTES).await?;
+            let _body = read_bounded(response, MAX_ERROR_RESPONSE_BYTES, mutation).await?;
             if status == StatusCode::UNAUTHORIZED {
                 return Err(AliasError::AuthenticationFailed);
             }
@@ -591,21 +647,28 @@ impl AliasClient {
             }
             return Err(AliasError::Provider {
                 status: status.as_u16(),
-                message: render_provider_error(&body, self.inner.api_token.expose()),
             });
         }
 
         if !is_json_content_type(response.headers().get(header::CONTENT_TYPE)) {
-            return Err(AliasError::UnexpectedContentType);
+            return Err(mutation_response_error(
+                AliasError::UnexpectedContentType,
+                mutation,
+            ));
         }
-        let body = read_bounded(response, MAX_SUCCESS_RESPONSE_BYTES).await?;
-        serde_json::from_slice(&body).map_err(AliasError::InvalidResponse)
+        let body = read_bounded(response, MAX_SUCCESS_RESPONSE_BYTES, mutation)
+            .await
+            .map_err(|error| mutation_response_error(error, mutation))?;
+        serde_json::from_slice(&body)
+            .map_err(AliasError::InvalidResponse)
+            .map_err(|error| mutation_response_error(error, mutation))
     }
 
     #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
     async fn send_json<T: DeserializeOwned>(
         &self,
         builder: reqwest::RequestBuilder,
+        mutation: Option<&'static str>,
     ) -> Result<T, AliasError> {
         let request = builder
             .build()
@@ -650,12 +713,16 @@ impl AliasClient {
         let fetch = fetch.unchecked_into::<js_sys::Function>();
         let response = fetch
             .call1(&global, &request)
-            .map_err(|_| wasm_fetch_error("provider fetch rejected"))?;
+            .map_err(|_| wasm_transport_error("provider fetch rejected", mutation))?;
         // `Promise::resolve` safely adopts promises and thenables across JavaScript realms.
         let response = JsFuture::from(js_sys::Promise::resolve(&response))
             .await
-            .map_err(|_| wasm_fetch_error("provider fetch failed"))?;
-        validate_wasm_response_shape(&response)?;
+            .map_err(|_| wasm_transport_error("provider fetch failed", mutation))?;
+        validate_wasm_response_shape(&response).map_err(|error| {
+            mutation.map_or(error, |operation| AliasError::MutationOutcomeUnknown {
+                operation,
+            })
+        })?;
         let response = response.unchecked_into::<web_sys::Response>();
 
         let status = response.status();
@@ -675,7 +742,15 @@ impl AliasClient {
         } else {
             MAX_ERROR_RESPONSE_BYTES
         };
-        let body = read_bounded_wasm(response, limit).await?;
+        let body = read_bounded_wasm(response, limit, mutation)
+            .await
+            .map_err(|error| {
+                if status.is_success() {
+                    mutation_response_error(error, mutation)
+                } else {
+                    error
+                }
+            })?;
 
         if !status.is_success() {
             if status == StatusCode::UNAUTHORIZED {
@@ -688,7 +763,6 @@ impl AliasClient {
             }
             return Err(AliasError::Provider {
                 status: status.as_u16(),
-                message: render_provider_error(&body, self.inner.api_token.expose()),
             });
         }
 
@@ -700,9 +774,14 @@ impl AliasClient {
             .as_deref()
             .is_some_and(is_json_content_type_str)
         {
-            return Err(AliasError::UnexpectedContentType);
+            return Err(mutation_response_error(
+                AliasError::UnexpectedContentType,
+                mutation,
+            ));
         }
-        serde_json::from_slice(&body).map_err(AliasError::InvalidResponse)
+        serde_json::from_slice(&body)
+            .map_err(AliasError::InvalidResponse)
+            .map_err(|error| mutation_response_error(error, mutation))
     }
 }
 
@@ -727,6 +806,11 @@ fn validate_base_url(value: &str) -> Result<Url, AliasError> {
     if url.host_str().is_none() {
         return Err(AliasError::InvalidBaseUrl("host is required"));
     }
+    if url.scheme() == "http" && !is_loopback_host(&url) {
+        return Err(AliasError::InvalidBaseUrl(
+            "plain HTTP is allowed only for loopback self-hosted services",
+        ));
+    }
     if !url.username().is_empty() || url.password().is_some() {
         return Err(AliasError::InvalidBaseUrl(
             "embedded credentials are forbidden",
@@ -743,6 +827,24 @@ fn validate_base_url(value: &str) -> Result<Url, AliasError> {
         url.set_path(&path);
     }
     Ok(url)
+}
+
+fn is_loopback_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => {
+            address.is_loopback()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|address| address.is_loopback())
+        }
+        Some(Host::Domain(domain)) => {
+            let domain = domain.trim_end_matches('.');
+            domain.eq_ignore_ascii_case("localhost")
+                || domain.to_ascii_lowercase().ends_with(".localhost")
+        }
+        None => false,
+    }
 }
 
 fn validate_token(token: &SensitiveString) -> Result<(), AliasError> {
@@ -762,6 +864,111 @@ fn validate_request_id(value: u64, message: &'static str) -> Result<(), AliasErr
     Ok(())
 }
 
+fn validate_optional_hostname(hostname: Option<&SensitiveString>) -> Result<(), AliasError> {
+    let Some(hostname) = hostname else {
+        return Ok(());
+    };
+    let value = hostname.expose();
+    if value.is_empty() || value.len() > MAX_HOSTNAME_BYTES || Host::parse(value).is_err() {
+        return Err(AliasError::InvalidRequest(
+            "hostname must be a bounded DNS name or IP address",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sensitive_length(
+    value: &SensitiveString,
+    max_bytes: usize,
+    message: &'static str,
+) -> Result<(), AliasError> {
+    if value.expose().len() > max_bytes {
+        return Err(AliasError::InvalidRequest(message));
+    }
+    Ok(())
+}
+
+fn validate_optional_sensitive_length(
+    value: Option<&SensitiveString>,
+    max_bytes: usize,
+    message: &'static str,
+) -> Result<(), AliasError> {
+    value.map_or(Ok(()), |value| {
+        validate_sensitive_length(value, max_bytes, message)
+    })
+}
+
+fn validate_name(value: &SensitiveString, message: &'static str) -> Result<(), AliasError> {
+    if value.expose().len() > MAX_NAME_BYTES || value.expose().chars().any(char::is_control) {
+        return Err(AliasError::InvalidRequest(message));
+    }
+    Ok(())
+}
+
+fn validate_optional_name(
+    value: Option<&SensitiveString>,
+    message: &'static str,
+) -> Result<(), AliasError> {
+    value.map_or(Ok(()), |value| validate_name(value, message))
+}
+
+fn validate_alias_prefix(value: &str) -> Result<(), AliasError> {
+    if value.is_empty()
+        || value.len() > MAX_ALIAS_PREFIX_BYTES
+        || !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+        })
+    {
+        return Err(AliasError::InvalidRequest(
+            "alias prefix must use at most 40 letters, numbers, dots, dashes, or underscores",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_signed_suffix(value: &SensitiveString) -> Result<(), AliasError> {
+    if value.expose().is_empty()
+        || value.expose().len() > MAX_SIGNED_SUFFIX_BYTES
+        || value
+            .expose()
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(AliasError::InvalidRequest(
+            "signed alias suffix is invalid or too large",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_request_mailbox_ids(ids: &[crate::MailboxId]) -> Result<(), AliasError> {
+    let mut seen = HashSet::with_capacity(ids.len().min(MAX_MAILBOX_IDS));
+    if ids.is_empty()
+        || ids.len() > MAX_MAILBOX_IDS
+        || ids.iter().any(|id| id.0 == 0 || !seen.insert(id.0))
+    {
+        return Err(AliasError::InvalidRequest(
+            "mailbox lists require 1 to 20 unique non-zero identifiers",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mutation_response(
+    result: Result<(), AliasError>,
+    operation: &'static str,
+) -> Result<(), AliasError> {
+    result.map_err(|_| AliasError::MutationResponseInvalid { operation })
+}
+
+fn mutation_response_error(error: AliasError, mutation: Option<&'static str>) -> AliasError {
+    match (error, mutation) {
+        (error @ AliasError::MutationOutcomeUnknown { .. }, _) => error,
+        (_, Some(operation)) => AliasError::MutationResponseInvalid { operation },
+        (error, None) => error,
+    }
+}
+
 fn validate_unique_nonzero_ids(ids: impl IntoIterator<Item = u64>) -> Result<(), AliasError> {
     let mut seen = HashSet::new();
     if ids.into_iter().any(|id| id == 0 || !seen.insert(id)) {
@@ -774,12 +981,28 @@ fn validate_unique_nonzero_ids(ids: impl IntoIterator<Item = u64>) -> Result<(),
 
 fn validate_alias(alias: &Alias) -> Result<(), AliasError> {
     validate_unique_nonzero_ids(std::iter::once(alias.id.0))?;
-    if alias.email.expose().is_empty() {
+    if !is_safe_email_address(alias.email.expose()) {
         return Err(AliasError::InvalidResponseValue(
-            "provider returned an empty alias address",
+            "provider returned an invalid alias address",
         ));
     }
-    if alias.mailbox.id.0 == 0 || alias.mailboxes.is_empty() {
+    if !is_safe_provider_text(&alias.creation_date, MAX_PROVIDER_DATE_BYTES)
+        || alias
+            .note
+            .as_ref()
+            .is_some_and(|note| note.expose().len() > MAX_NOTE_BYTES)
+        || alias.name.as_ref().is_some_and(|name| {
+            name.expose().len() > MAX_NAME_BYTES || name.expose().chars().any(char::is_control)
+        })
+    {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned invalid alias metadata",
+        ));
+    }
+    if alias.mailbox.id.0 == 0
+        || alias.mailboxes.is_empty()
+        || alias.mailboxes.len() > MAX_MAILBOX_IDS
+    {
         return Err(AliasError::InvalidResponseValue(
             "provider returned invalid alias mailbox identity",
         ));
@@ -800,13 +1023,75 @@ fn validate_alias(alias: &Alias) -> Result<(), AliasError> {
     if alias
         .mailboxes
         .iter()
-        .any(|mailbox| mailbox.email.expose().is_empty())
+        .any(|mailbox| !is_safe_email_address(mailbox.email.expose()))
     {
         return Err(AliasError::InvalidResponseValue(
-            "provider returned an empty mailbox address",
+            "provider returned an invalid mailbox address",
+        ));
+    }
+    if let Some(activity) = alias.latest_activity.as_ref()
+        && (!matches!(
+            activity.action.as_str(),
+            "forward" | "reply" | "block" | "bounced"
+        ) || !is_safe_email_address(activity.contact.email.expose())
+            || activity.contact.reverse_alias.expose().len() > 1024
+            || activity
+                .contact
+                .reverse_alias
+                .expose()
+                .chars()
+                .any(char::is_control))
+    {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned invalid alias activity",
         ));
     }
     Ok(())
+}
+
+fn validate_alias_options(
+    options: &AliasCreationOptions,
+    requested_hostname: Option<&SensitiveString>,
+) -> Result<(), AliasError> {
+    if options.prefix_suggestion.len() > MAX_ALIAS_PREFIX_BYTES
+        || options
+            .prefix_suggestion
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+        || options.suffixes.iter().any(|suffix| {
+            suffix.suffix.expose().len() > 1024
+                || suffix.suffix.expose().chars().any(char::is_control)
+                || suffix.signed_suffix.expose().len() > MAX_SIGNED_SUFFIX_BYTES
+                || suffix.signed_suffix.expose().chars().any(char::is_control)
+        })
+    {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned invalid alias creation options",
+        ));
+    }
+    if let Some(recommendation) = options.recommendation.as_ref()
+        && (!is_safe_email_address(recommendation.alias.expose())
+            || !is_safe_provider_identifier(recommendation.hostname.expose(), 253)
+            || requested_hostname
+                .is_some_and(|hostname| hostname.expose() != recommendation.hostname.expose()))
+    {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned an invalid alias recommendation",
+        ));
+    }
+    Ok(())
+}
+
+fn is_safe_provider_identifier(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && !value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+}
+
+fn is_safe_provider_text(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty() && value.len() <= max_bytes && !value.chars().any(char::is_control)
 }
 
 fn validate_alias_page(aliases: &[Alias]) -> Result<(), AliasError> {
@@ -819,19 +1104,29 @@ fn validate_alias_page(aliases: &[Alias]) -> Result<(), AliasError> {
 
 fn validate_custom_domain(domain: &CustomDomain) -> Result<(), AliasError> {
     validate_unique_nonzero_ids(std::iter::once(domain.id.0))?;
-    if domain.domain_name.expose().is_empty() {
+    if !is_safe_provider_identifier(domain.domain_name.expose(), 253)
+        || !is_safe_provider_text(&domain.creation_date, MAX_PROVIDER_DATE_BYTES)
+        || domain.name.as_ref().is_some_and(|name| {
+            name.expose().len() > MAX_NAME_BYTES || name.expose().chars().any(char::is_control)
+        })
+    {
         return Err(AliasError::InvalidResponseValue(
-            "provider returned an empty custom domain",
+            "provider returned an invalid custom domain",
+        ));
+    }
+    if domain.mailboxes.len() > MAX_MAILBOX_IDS {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned too many custom-domain mailboxes",
         ));
     }
     validate_unique_nonzero_ids(domain.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
     if domain
         .mailboxes
         .iter()
-        .any(|mailbox| mailbox.email.expose().is_empty())
+        .any(|mailbox| !is_safe_email_address(mailbox.email.expose()))
     {
         return Err(AliasError::InvalidResponseValue(
-            "provider returned an empty mailbox address",
+            "provider returned an invalid mailbox address",
         ));
     }
     Ok(())
@@ -839,9 +1134,18 @@ fn validate_custom_domain(domain: &CustomDomain) -> Result<(), AliasError> {
 
 fn validate_reverse_alias(contact: &ReverseAlias) -> Result<(), AliasError> {
     validate_unique_nonzero_ids(std::iter::once(contact.id.0))?;
-    if contact.contact.expose().is_empty() || contact.reverse_alias_address.expose().is_empty() {
+    if !is_safe_provider_text(&contact.creation_date, MAX_PROVIDER_DATE_BYTES)
+        || contact
+            .last_email_sent_date
+            .as_ref()
+            .is_some_and(|date| !is_safe_provider_text(date, MAX_PROVIDER_DATE_BYTES))
+        || !is_safe_email_address(contact.contact.expose())
+        || !is_safe_email_address(contact.reverse_alias_address.expose())
+        || contact.reverse_alias.expose().len() > 1024
+        || contact.reverse_alias.expose().chars().any(char::is_control)
+    {
         return Err(AliasError::InvalidResponseValue(
-            "provider returned an empty contact or reverse alias address",
+            "provider returned an invalid contact or reverse alias address",
         ));
     }
     Ok(())
@@ -879,6 +1183,7 @@ fn is_json_content_type_str(value: &str) -> bool {
 async fn read_bounded(
     mut response: reqwest::Response,
     limit: usize,
+    mutation: Option<&'static str>,
 ) -> Result<Vec<u8>, AliasError> {
     if response
         .content_length()
@@ -891,7 +1196,7 @@ async fn read_bounded(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| AliasError::Transport(error.without_url()))?
+        .map_err(|error| transport_error(error, mutation))?
     {
         if body.len().saturating_add(chunk.len()) > limit {
             return Err(AliasError::ResponseTooLarge { limit_bytes: limit });
@@ -901,9 +1206,25 @@ async fn read_bounded(
     Ok(body)
 }
 
+#[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
+fn transport_error(error: reqwest::Error, mutation: Option<&'static str>) -> AliasError {
+    mutation.map_or_else(
+        || AliasError::Transport(error.without_url()),
+        |operation| AliasError::MutationOutcomeUnknown { operation },
+    )
+}
+
 #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
 fn wasm_fetch_error(message: &'static str) -> AliasError {
     AliasError::InvalidResponseValue(message)
+}
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+fn wasm_transport_error(message: &'static str, mutation: Option<&'static str>) -> AliasError {
+    mutation.map_or_else(
+        || wasm_fetch_error(message),
+        |operation| AliasError::MutationOutcomeUnknown { operation },
+    )
 }
 
 #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
@@ -955,6 +1276,7 @@ impl Drop for WasmReaderLock {
 async fn read_bounded_wasm(
     response: web_sys::Response,
     limit: usize,
+    mutation: Option<&'static str>,
 ) -> Result<Vec<u8>, AliasError> {
     if response
         .headers()
@@ -982,7 +1304,7 @@ async fn read_bounded_wasm(
     loop {
         let result = JsFuture::from(reader.reader.read())
             .await
-            .map_err(|_| wasm_fetch_error("provider response stream failed"))?
+            .map_err(|_| wasm_transport_error("provider response stream failed", mutation))?
             .unchecked_into::<web_sys::ReadableStreamReadResult>();
         if result.get_done().unwrap_or(false) {
             break;
@@ -998,49 +1320,6 @@ async fn read_bounded_wasm(
         chunk.copy_to(&mut body[start..]);
     }
     Ok(body)
-}
-
-fn render_provider_error(body: &[u8], token: &str) -> String {
-    #[derive(Deserialize)]
-    struct ErrorResponse {
-        error: Option<String>,
-    }
-
-    let raw = serde_json::from_slice::<ErrorResponse>(body)
-        .ok()
-        .and_then(|response| response.error)
-        .unwrap_or_else(|| "request failed".to_owned());
-    let redacted = if token.is_empty() {
-        raw
-    } else {
-        raw.replace(token, "[REDACTED]")
-    };
-    let mut rendered = String::with_capacity(redacted.len().min(MAX_RENDERED_ERROR_CHARS));
-    let mut previous_was_space = false;
-    for character in redacted.chars().take(MAX_RENDERED_ERROR_CHARS) {
-        let character = match character {
-            '<' => '[',
-            '>' => ']',
-            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => continue,
-            character if character.is_control() => ' ',
-            character => character,
-        };
-        if character.is_whitespace() {
-            if !previous_was_space {
-                rendered.push(' ');
-            }
-            previous_was_space = true;
-        } else {
-            rendered.push(character);
-            previous_was_space = false;
-        }
-    }
-    let rendered = rendered.trim();
-    if rendered.is_empty() {
-        "request failed".to_owned()
-    } else {
-        rendered.to_owned()
-    }
 }
 
 #[derive(Deserialize)]
