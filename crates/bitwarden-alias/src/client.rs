@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 use bitwarden_core::Client;
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
@@ -28,6 +31,13 @@ pub const SIMPLELOGIN_DEFAULT_BASE_URL: &str = "https://app.simplelogin.io/";
 const MAX_SUCCESS_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_ERROR_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_RENDERED_ERROR_CHARS: usize = 512;
+
+type AliasStateLocks = Mutex<HashMap<(String, AliasId), Weak<tokio::sync::Mutex<()>>>>;
+
+/// SimpleLogin only exposes a toggle endpoint. Serialize explicit state changes by provider and
+/// stable ID across every client in this process so concurrent callers cannot double-toggle an
+/// alias back to its original state. Weak entries keep the global map bounded.
+static ALIAS_STATE_LOCKS: OnceLock<AliasStateLocks> = OnceLock::new();
 
 /// Configuration used to connect an [`AliasClient`] to SimpleLogin.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
@@ -75,7 +85,11 @@ impl AliasClient {
         validate_token(&settings.api_token)?;
         let http = bitwarden_api_base::new_http_client_builder();
         #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
-        let http = http.redirect(Policy::none());
+        // Lifecycle mutations are not universally replay-safe (creation and toggle in
+        // particular), so override reqwest's protocol-level retry policy. Callers can decide
+        // whether to retry after observing a bounded, URL-free error. The WASM transport invokes
+        // fetch exactly once itself and therefore has no reqwest retry policy.
+        let http = http.retry(reqwest::retry::never()).redirect(Policy::none());
         let http = http
             .build()
             .map_err(|error| AliasError::Transport(error.without_url()))?;
@@ -124,7 +138,9 @@ impl AliasClient {
             .json(&Body {
                 note: request.note.as_ref(),
             });
-        self.send_json(builder).await
+        let alias = self.send_json(builder).await?;
+        validate_alias(&alias)?;
+        Ok(alias)
     }
 
     /// Creates a custom alias with SimpleLogin's signed-suffix v3 API.
@@ -135,6 +151,11 @@ impl AliasClient {
         if request.mailbox_ids.is_empty() {
             return Err(AliasError::InvalidRequest(
                 "custom alias creation requires at least one mailbox",
+            ));
+        }
+        if request.mailbox_ids.iter().any(|id| id.0 == 0) {
+            return Err(AliasError::InvalidRequest(
+                "mailbox identifiers must be non-zero",
             ));
         }
 
@@ -163,7 +184,9 @@ impl AliasClient {
                 note: request.note.as_ref(),
                 name: request.name.as_ref(),
             });
-        self.send_json(builder).await
+        let alias = self.send_json(builder).await?;
+        validate_alias(&alias)?;
+        Ok(alias)
     }
 
     /// Gets creation suffixes, a prefix suggestion, and any alias recommendation for a hostname.
@@ -193,6 +216,7 @@ impl AliasClient {
     pub async fn list_aliases(&self, request: ListAliasesRequest) -> Result<AliasPage, AliasError> {
         let builder = self.alias_list_request(Method::GET, request.page, request.filter)?;
         let response: AliasesResponse = self.send_json(builder).await?;
+        validate_alias_page(&response.aliases)?;
         Ok(AliasPage {
             page: request.page,
             aliases: response.aliases,
@@ -215,6 +239,7 @@ impl AliasClient {
                 query: &request.query,
             });
         let response: AliasesResponse = self.send_json(builder).await?;
+        validate_alias_page(&response.aliases)?;
         Ok(AliasPage {
             page: request.page,
             aliases: response.aliases,
@@ -223,8 +248,16 @@ impl AliasClient {
 
     /// Gets full lifecycle data for a stable alias identifier.
     pub async fn get_alias(&self, alias_id: AliasId) -> Result<Alias, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let builder = self.request(Method::GET, &format!("api/aliases/{alias_id}"))?;
-        self.send_json(builder).await
+        let alias = self.send_json(builder).await?;
+        validate_alias(&alias)?;
+        if alias.id != alias_id {
+            return Err(AliasError::InvalidResponseValue(
+                "provider returned a different alias identifier",
+            ));
+        }
+        Ok(alias)
     }
 
     /// Updates mutable alias fields and returns refreshed lifecycle data.
@@ -233,9 +266,19 @@ impl AliasClient {
         alias_id: AliasId,
         request: UpdateAliasRequest,
     ) -> Result<Alias, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         if request.is_empty() {
             return Err(AliasError::InvalidRequest(
                 "alias update requires at least one field",
+            ));
+        }
+        if request
+            .mailbox_ids
+            .as_ref()
+            .is_some_and(|ids| ids.is_empty() || ids.iter().any(|id| id.0 == 0))
+        {
+            return Err(AliasError::InvalidRequest(
+                "alias update requires non-zero mailbox identifiers",
             ));
         }
         let builder = self
@@ -257,6 +300,9 @@ impl AliasClient {
         alias_id: AliasId,
         enabled: bool,
     ) -> Result<AliasState, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
+        let state_lock = self.alias_state_lock(alias_id);
+        let _guard = state_lock.lock().await;
         let current = self.get_alias(alias_id).await?;
         if current.enabled == enabled {
             return Ok(AliasState {
@@ -267,6 +313,11 @@ impl AliasClient {
 
         let builder = self.request(Method::POST, &format!("api/aliases/{alias_id}/toggle"))?;
         let response: ToggleAliasResponse = self.send_json(builder).await?;
+        if response.enabled != enabled {
+            return Err(AliasError::InvalidResponseValue(
+                "provider returned an unexpected alias state",
+            ));
+        }
         Ok(AliasState {
             id: alias_id,
             enabled: response.enabled,
@@ -285,6 +336,7 @@ impl AliasClient {
 
     /// Deletes an alias.
     pub async fn delete_alias(&self, alias_id: AliasId) -> Result<DeleteAliasResult, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let builder = self.request(Method::DELETE, &format!("api/aliases/{alias_id}"))?;
         let response: DeletedResponse = self.send_json(builder).await?;
         Ok(DeleteAliasResult {
@@ -296,13 +348,26 @@ impl AliasClient {
     /// Lists domains currently available for random alias generation.
     pub async fn list_domains(&self) -> Result<Vec<AliasDomain>, AliasError> {
         let builder = self.request(Method::GET, "api/v2/setting/domains")?;
-        self.send_json(builder).await
+        let domains: Vec<AliasDomain> = self.send_json(builder).await?;
+        if domains
+            .iter()
+            .any(|domain| domain.domain.expose().is_empty())
+        {
+            return Err(AliasError::InvalidResponseValue(
+                "provider returned an empty alias domain",
+            ));
+        }
+        Ok(domains)
     }
 
     /// Lists all custom domains owned by the authenticated account.
     pub async fn list_custom_domains(&self) -> Result<Vec<CustomDomain>, AliasError> {
         let builder = self.request(Method::GET, "api/custom_domains")?;
         let response: CustomDomainsResponse = self.send_json(builder).await?;
+        validate_unique_nonzero_ids(response.custom_domains.iter().map(|domain| domain.id.0))?;
+        for domain in &response.custom_domains {
+            validate_custom_domain(domain)?;
+        }
         Ok(response.custom_domains)
     }
 
@@ -312,15 +377,31 @@ impl AliasClient {
         domain_id: CustomDomainId,
         request: UpdateCustomDomainRequest,
     ) -> Result<CustomDomain, AliasError> {
+        validate_request_id(domain_id.0, "custom-domain identifier must be non-zero")?;
         if request.is_empty() {
             return Err(AliasError::InvalidRequest(
                 "custom-domain update requires at least one field",
+            ));
+        }
+        if request
+            .mailbox_ids
+            .as_ref()
+            .is_some_and(|ids| ids.is_empty() || ids.iter().any(|id| id.0 == 0))
+        {
+            return Err(AliasError::InvalidRequest(
+                "custom-domain update requires non-zero mailbox identifiers",
             ));
         }
         let builder = self
             .request(Method::PATCH, &format!("api/custom_domains/{domain_id}"))?
             .json(&request);
         let response: CustomDomainResponse = self.send_json(builder).await?;
+        validate_custom_domain(&response.custom_domain)?;
+        if response.custom_domain.id != domain_id {
+            return Err(AliasError::InvalidResponseValue(
+                "provider returned a different custom-domain identifier",
+            ));
+        }
         Ok(response.custom_domain)
     }
 
@@ -328,6 +409,16 @@ impl AliasClient {
     pub async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, AliasError> {
         let builder = self.request(Method::GET, "api/v2/mailboxes")?;
         let response: MailboxesResponse = self.send_json(builder).await?;
+        validate_unique_nonzero_ids(response.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
+        if response
+            .mailboxes
+            .iter()
+            .any(|mailbox| mailbox.email.expose().is_empty())
+        {
+            return Err(AliasError::InvalidResponseValue(
+                "provider returned an empty mailbox address",
+            ));
+        }
         Ok(response.mailboxes)
     }
 
@@ -337,10 +428,12 @@ impl AliasClient {
         alias_id: AliasId,
         page: u32,
     ) -> Result<ReverseAliasPage, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let builder = self
             .request(Method::GET, &format!("api/aliases/{alias_id}/contacts"))?
             .query(&[("page_id", page)]);
         let response: ContactsResponse = self.send_json(builder).await?;
+        validate_reverse_alias_page(&response.contacts)?;
         Ok(ReverseAliasPage {
             alias_id,
             page,
@@ -363,6 +456,7 @@ impl AliasClient {
         alias_id: AliasId,
         contact: SensitiveString,
     ) -> Result<ReverseAlias, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         #[derive(Serialize)]
         struct Body<'a> {
             contact: &'a SensitiveString,
@@ -370,7 +464,9 @@ impl AliasClient {
         let builder = self
             .request(Method::POST, &format!("api/aliases/{alias_id}/contacts"))?
             .json(&Body { contact: &contact });
-        self.send_json(builder).await
+        let contact = self.send_json(builder).await?;
+        validate_reverse_alias(&contact)?;
+        Ok(contact)
     }
 
     /// Creates a contact and returns the reverse alias assigned to it.
@@ -387,6 +483,7 @@ impl AliasClient {
         &self,
         contact_id: ContactId,
     ) -> Result<ContactState, AliasError> {
+        validate_request_id(contact_id.0, "contact identifier must be non-zero")?;
         let builder = self.request(Method::POST, &format!("api/contacts/{contact_id}/toggle"))?;
         let response: ToggleContactResponse = self.send_json(builder).await?;
         Ok(ContactState {
@@ -400,6 +497,7 @@ impl AliasClient {
         &self,
         contact_id: ContactId,
     ) -> Result<DeleteContactResult, AliasError> {
+        validate_request_id(contact_id.0, "contact identifier must be non-zero")?;
         let builder = self.request(Method::DELETE, &format!("api/contacts/{contact_id}"))?;
         let response: DeletedResponse = self.send_json(builder).await?;
         Ok(DeleteContactResult {
@@ -421,6 +519,21 @@ impl AliasClient {
             builder = builder.query(&[(filter.as_str(), "true")]);
         }
         Ok(builder)
+    }
+
+    fn alias_state_lock(&self, alias_id: AliasId) -> Arc<tokio::sync::Mutex<()>> {
+        let key = (self.inner.base_url.as_str().to_owned(), alias_id);
+        let mut locks = ALIAS_STATE_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
     }
 
     fn request(
@@ -541,8 +654,9 @@ impl AliasClient {
         // `Promise::resolve` safely adopts promises and thenables across JavaScript realms.
         let response = JsFuture::from(js_sys::Promise::resolve(&response))
             .await
-            .map_err(|_| wasm_fetch_error("provider fetch failed"))?
-            .unchecked_into::<web_sys::Response>();
+            .map_err(|_| wasm_fetch_error("provider fetch failed"))?;
+        validate_wasm_response_shape(&response)?;
+        let response = response.unchecked_into::<web_sys::Response>();
 
         let status = response.status();
         if status == 0 || (300..400).contains(&status) {
@@ -641,6 +755,106 @@ fn validate_token(token: &SensitiveString) -> Result<(), AliasError> {
     Ok(())
 }
 
+fn validate_request_id(value: u64, message: &'static str) -> Result<(), AliasError> {
+    if value == 0 {
+        return Err(AliasError::InvalidRequest(message));
+    }
+    Ok(())
+}
+
+fn validate_unique_nonzero_ids(ids: impl IntoIterator<Item = u64>) -> Result<(), AliasError> {
+    let mut seen = HashSet::new();
+    if ids.into_iter().any(|id| id == 0 || !seen.insert(id)) {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned a zero or duplicate stable identifier",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_alias(alias: &Alias) -> Result<(), AliasError> {
+    validate_unique_nonzero_ids(std::iter::once(alias.id.0))?;
+    if alias.email.expose().is_empty() {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned an empty alias address",
+        ));
+    }
+    if alias.mailbox.id.0 == 0 || alias.mailboxes.is_empty() {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned invalid alias mailbox identity",
+        ));
+    }
+    validate_unique_nonzero_ids(alias.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
+    let primary_mailbox = alias
+        .mailboxes
+        .iter()
+        .find(|mailbox| mailbox.id == alias.mailbox.id)
+        .ok_or(AliasError::InvalidResponseValue(
+            "provider returned conflicting alias mailbox identity",
+        ))?;
+    if primary_mailbox.email != alias.mailbox.email {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned conflicting alias mailbox identity",
+        ));
+    }
+    if alias
+        .mailboxes
+        .iter()
+        .any(|mailbox| mailbox.email.expose().is_empty())
+    {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned an empty mailbox address",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_alias_page(aliases: &[Alias]) -> Result<(), AliasError> {
+    validate_unique_nonzero_ids(aliases.iter().map(|alias| alias.id.0))?;
+    for alias in aliases {
+        validate_alias(alias)?;
+    }
+    Ok(())
+}
+
+fn validate_custom_domain(domain: &CustomDomain) -> Result<(), AliasError> {
+    validate_unique_nonzero_ids(std::iter::once(domain.id.0))?;
+    if domain.domain_name.expose().is_empty() {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned an empty custom domain",
+        ));
+    }
+    validate_unique_nonzero_ids(domain.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
+    if domain
+        .mailboxes
+        .iter()
+        .any(|mailbox| mailbox.email.expose().is_empty())
+    {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned an empty mailbox address",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_reverse_alias(contact: &ReverseAlias) -> Result<(), AliasError> {
+    validate_unique_nonzero_ids(std::iter::once(contact.id.0))?;
+    if contact.contact.expose().is_empty() || contact.reverse_alias_address.expose().is_empty() {
+        return Err(AliasError::InvalidResponseValue(
+            "provider returned an empty contact or reverse alias address",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_reverse_alias_page(contacts: &[ReverseAlias]) -> Result<(), AliasError> {
+    validate_unique_nonzero_ids(contacts.iter().map(|contact| contact.id.0))?;
+    for contact in contacts {
+        validate_reverse_alias(contact)?;
+    }
+    Ok(())
+}
+
 #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
 fn is_json_content_type(value: Option<&HeaderValue>) -> bool {
     value
@@ -693,6 +907,51 @@ fn wasm_fetch_error(message: &'static str) -> AliasError {
 }
 
 #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+fn validate_wasm_response_shape(response: &JsValue) -> Result<(), AliasError> {
+    if !response.is_object() {
+        return Err(wasm_fetch_error(
+            "provider fetch returned an invalid response",
+        ));
+    }
+    let status = js_sys::Reflect::get(response, &JsValue::from_str("status"))
+        .map_err(|_| wasm_fetch_error("provider response status unavailable"))?;
+    if !status.as_f64().is_some_and(|status| {
+        status.is_finite() && status.fract() == 0.0 && (0.0..=u16::MAX as f64).contains(&status)
+    }) {
+        return Err(wasm_fetch_error("provider response status unavailable"));
+    }
+    let headers = js_sys::Reflect::get(response, &JsValue::from_str("headers"))
+        .map_err(|_| wasm_fetch_error("provider response headers unavailable"))?;
+    let get = js_sys::Reflect::get(&headers, &JsValue::from_str("get"))
+        .map_err(|_| wasm_fetch_error("provider response headers unavailable"))?;
+    if !headers.is_object() || !get.is_function() {
+        return Err(wasm_fetch_error("provider response headers unavailable"));
+    }
+    let body = js_sys::Reflect::get(response, &JsValue::from_str("body"))
+        .map_err(|_| wasm_fetch_error("provider response body unavailable"))?;
+    if !body.is_null() {
+        let get_reader = js_sys::Reflect::get(&body, &JsValue::from_str("getReader"))
+            .map_err(|_| wasm_fetch_error("provider response body unavailable"))?;
+        if !body.is_object() || !get_reader.is_function() {
+            return Err(wasm_fetch_error("provider response body unavailable"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+struct WasmReaderLock {
+    reader: web_sys::ReadableStreamDefaultReader,
+}
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+impl Drop for WasmReaderLock {
+    fn drop(&mut self) {
+        self.reader.release_lock();
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
 async fn read_bounded_wasm(
     response: web_sys::Response,
     limit: usize,
@@ -714,12 +973,14 @@ async fn read_bounded_wasm(
     // `get_reader` is specified to return a default reader. Avoid an `instanceof` check here:
     // consumers such as Jest and browser extensions can execute the SDK across JavaScript realms,
     // where an otherwise-valid reader fails a realm-local constructor identity check.
-    let reader = stream
-        .get_reader()
-        .unchecked_into::<web_sys::ReadableStreamDefaultReader>();
+    let reader = WasmReaderLock {
+        reader: stream
+            .get_reader()
+            .unchecked_into::<web_sys::ReadableStreamDefaultReader>(),
+    };
     let mut body = Vec::new();
     loop {
-        let result = JsFuture::from(reader.read())
+        let result = JsFuture::from(reader.reader.read())
             .await
             .map_err(|_| wasm_fetch_error("provider response stream failed"))?
             .unchecked_into::<web_sys::ReadableStreamReadResult>();
@@ -729,7 +990,7 @@ async fn read_bounded_wasm(
         let chunk = js_sys::Uint8Array::new(&result.get_value());
         let chunk_len = chunk.length() as usize;
         if body.len().saturating_add(chunk_len) > limit {
-            let _ = reader.cancel();
+            let _ = reader.reader.cancel();
             return Err(AliasError::ResponseTooLarge { limit_bytes: limit });
         }
         let start = body.len();

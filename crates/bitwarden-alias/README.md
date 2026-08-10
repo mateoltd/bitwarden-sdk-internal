@@ -5,6 +5,20 @@ GPL-only SimpleLogin alias lifecycle support for the Bitwarden SDK.
 This crate intentionally contains only the Rust SDK API. Language bindings and
 commercial packaging are maintained separately.
 
+## Transport security
+
+The API token is accepted only as a sensitive value and sent only in the
+`Authentication` header. Authenticated redirects and cookie credentials are
+disabled, successful responses are capped at 512 KiB, error responses are
+capped at 16 KiB, and provider error text is bounded, sanitized and token
+redacted. Retained transport errors have their request URL removed.
+
+Lifecycle requests are never automatically replayed. Explicit enable and
+disable operations are serialized by provider instance and stable alias ID
+across all clients in a process because SimpleLogin exposes a toggle rather
+than a set-state endpoint. Provider identities and returned states are checked
+before a mutation is reported as successful.
+
 ## Vault reconciliation
 
 Alias references are stored in the encrypted hidden field
