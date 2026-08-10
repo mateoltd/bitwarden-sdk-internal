@@ -3,10 +3,12 @@
 import json
 import os
 
+from app.alias_delete import delete_alias
 from app.contact_utils import create_contact
 from app.db import Session
 from app.models import (
     Alias,
+    AliasDeleteReason,
     ApiKey,
     Contact,
     SLDomain,
@@ -78,9 +80,20 @@ def ensure_alias(user: User, email: str, note: str) -> Alias:
     return alias
 
 
+def cleanup_interrupted_lifecycle(user: User) -> int:
+    aliases = Alias.filter(
+        Alias.user_id == user.id, Alias.email.like("sdk-lifecycle-%@sl.lan")
+    ).all()
+    for alias in aliases:
+        delete_alias(alias, user, AliasDeleteReason.ManualAction, commit=False)
+    Session.commit()
+    return len(aliases)
+
+
 def seed() -> dict:
     ensure_domains()
     user = ensure_user()
+    cleaned_interrupted_aliases = cleanup_interrupted_lifecycle(user)
 
     aliases = [
         ensure_alias(user, email, f"Seeded by Bitwarden SDK lab ({index})")
@@ -107,6 +120,7 @@ def seed() -> dict:
         "seeded_aliases": [alias.email for alias in aliases],
         "seeded_contact": contact_result.contact.website_email,
         "seeded_reverse_alias": contact_result.contact.reply_email,
+        "cleaned_interrupted_aliases": cleaned_interrupted_aliases,
     }
 
 

@@ -11,6 +11,18 @@ expected_alias="sdk-lifecycle-${run_id}@sl.lan"
 website="sdk-lifecycle-${run_id}.com"
 updated_note="Lifecycle update persisted"
 contact_email="lifecycle-contact@example.com"
+alias_id=""
+contact_id=""
+
+validate_api_key() {
+  [[ "$SIMPLELOGIN_API_KEY" =~ ^[A-Za-z0-9._~-]+$ ]] && \
+    ((${#SIMPLELOGIN_API_KEY} >= 8 && ${#SIMPLELOGIN_API_KEY} <= 512)) || {
+    printf 'invalid SimpleLogin API key\n' >&2
+    exit 1
+  }
+}
+
+validate_api_key
 
 api() {
   local method="$1"
@@ -20,14 +32,42 @@ api() {
     --silent
     --show-error
     --fail-with-body
+    --connect-timeout 3
+    --max-time 30
+    --max-filesize 1048576
     --request "$method"
-    --header "Authentication: ${SIMPLELOGIN_API_KEY}"
   )
   if [[ -n "$payload" ]]; then
     args+=(--header "Content-Type: application/json" --data "$payload")
   fi
-  curl "${args[@]}" "${SIMPLELOGIN_BASE_URL}${path}"
+  # Supplying the authentication header through stdin keeps it out of process
+  # arguments while preserving curl's normal response stream for the caller.
+  printf 'header = "Authentication: %s"\n' "$SIMPLELOGIN_API_KEY" | \
+    curl --config - "${args[@]}" "${SIMPLELOGIN_BASE_URL}${path}"
 }
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  set +e
+  if [[ ! "$alias_id" =~ ^[0-9]+$ ]]; then
+    local interrupted_aliases
+    interrupted_aliases="$(api GET /api/v2/aliases?page_id=0 2>/dev/null)"
+    alias_id="$(jq -r --arg email "$expected_alias" \
+      '.aliases[]? | select(.email == $email) | .id' <<<"$interrupted_aliases" | head -n 1)"
+  fi
+  if [[ "$contact_id" =~ ^[0-9]+$ ]]; then
+    api DELETE "/api/contacts/${contact_id}" >/dev/null 2>&1
+  fi
+  if [[ "$alias_id" =~ ^[0-9]+$ ]]; then
+    api DELETE "/api/aliases/${alias_id}" >/dev/null 2>&1
+  fi
+  exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 assert_jq() {
   local payload="$1"
@@ -53,14 +93,15 @@ seeded_contacts="$(api GET "/api/aliases/${seed_alias_id}/contacts?page_id=0")"
 assert_jq "$seeded_contacts" '[.contacts[].contact] | index("seed-contact@example.com") != null' "seeded contact is listed"
 
 printf 'running the production Bitwarden SimpleLogin generator against the real service\n'
-env \
-  SIMPLELOGIN_REAL_BASE_URL="$SIMPLELOGIN_BASE_URL" \
-  SIMPLELOGIN_REAL_API_KEY="$SIMPLELOGIN_API_KEY" \
-  SIMPLELOGIN_REAL_WEBSITE="$website" \
-  SIMPLELOGIN_REAL_EXPECTED_ALIAS="$expected_alias" \
+(
+  export SIMPLELOGIN_REAL_BASE_URL="$SIMPLELOGIN_BASE_URL"
+  export SIMPLELOGIN_REAL_API_KEY="$SIMPLELOGIN_API_KEY"
+  export SIMPLELOGIN_REAL_WEBSITE="$website"
+  export SIMPLELOGIN_REAL_EXPECTED_ALIAS="$expected_alias"
   cargo test -p bitwarden-generators \
     username_forwarders::simplelogin::tests::test_real_simplelogin_service \
     -- --ignored --exact
+)
 
 aliases="$(api GET /api/v2/aliases?page_id=0)"
 assert_jq "$aliases" "[.aliases[].email] | index(\"${expected_alias}\") != null" "SDK-created alias is listed"
@@ -143,6 +184,7 @@ assert_jq "$deleted_contact" '.deleted == true' "contact deletes"
   printf 'database still contains deleted contact\n' >&2
   exit 1
 }
+contact_id=""
 
 deleted_alias="$(api DELETE "/api/aliases/${alias_id}")"
 assert_jq "$deleted_alias" '.deleted == true' "alias deletes"
@@ -150,6 +192,7 @@ assert_jq "$deleted_alias" '.deleted == true' "alias deletes"
   printf 'database still contains deleted alias\n' >&2
   exit 1
 }
+alias_id=""
 aliases="$(api GET /api/v2/aliases?page_id=0)"
 assert_jq "$aliases" "[.aliases[].email] | index(\"${expected_alias}\") == null" "deleted alias is absent from list"
 

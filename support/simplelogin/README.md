@@ -11,7 +11,7 @@ Rust toolchain. On ARM hosts, the upstream image runs under `linux/amd64`
 emulation because that platform is fixed by SimpleLogin's Dockerfile.
 
 ```sh
-# Full API/SDK/database lifecycle from a clean Docker volume
+# Provision/update the lab and run the full API/SDK/database lifecycle
 support/simplelogin/lab.sh test
 
 # Include real SMTP forwarding and reverse-alias reply delivery through Mailpit
@@ -20,6 +20,9 @@ support/simplelogin/lab.sh test --mail
 # Inspect non-secret persisted state
 support/simplelogin/lab.sh inspect
 
+# Show the exact upstream commit, image tag, and local image ID
+support/simplelogin/lab.sh provenance
+
 # Recreate the lab with fresh database and upload volumes
 support/simplelogin/lab.sh reset
 
@@ -27,12 +30,27 @@ support/simplelogin/lab.sh reset
 support/simplelogin/lab.sh down
 ```
 
+To run any SDK, generated binding, or clean consumer against the lab without
+printing or persisting its API token, provision it and use `run`. The child
+receives `SIMPLELOGIN_API_URL`, `SIMPLELOGIN_API_TOKEN`, and
+`SIMPLELOGIN_USER_EMAIL` only in its environment:
+
+```sh
+support/simplelogin/lab.sh provision
+support/simplelogin/lab.sh run -- cargo test -p bitwarden-alias --test simplelogin_live -- --ignored
+support/simplelogin/lab.sh run -- npm test
+```
+
 For iterative work, use `provision`, `lifecycle`, and `down` separately. The
 `seed` is idempotent and does not print the newly generated API key. The
-lifecycle and readiness commands capture that value internally and pass it
-only in the environment of their local test process; it is not written to the
-checkout or a host credentials file. `inspect` intentionally omits API key
-values.
+lifecycle, readiness, and `run` commands capture that value internally and
+pass it only in the environment of their local test process; it is not written
+to the checkout or a host credentials file, and the lab does not place it in
+command arguments. `inspect` intentionally omits API key values. HTTP responses
+are capped at 1 MiB and the mail checks refuse non-loopback endpoints and
+redirects.
+Seeding also removes aliases left by an interrupted built-in lifecycle before
+recreating its deterministic fixtures.
 
 The defaults can be overridden without editing tracked files:
 
@@ -48,3 +66,8 @@ reverse-alias persistence against both the real HTTP API and PostgreSQL. The
 optional mail phase sends one message through SimpleLogin's email handler to a
 seeded mailbox and one reply through the generated reverse alias, asserting
 both deliveries in Mailpit.
+
+`reset` is the deterministic clean-start operation. `down` removes the
+containers, network, PostgreSQL data, Redis state, and upload volume. The
+lifecycle also installs an exit trap so a failed assertion or interrupted run
+deletes the alias and contact it created before returning.
