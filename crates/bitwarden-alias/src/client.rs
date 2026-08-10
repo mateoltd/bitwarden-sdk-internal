@@ -3,9 +3,16 @@ use std::sync::Arc;
 use bitwarden_core::Client;
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use http::{HeaderValue, Method, StatusCode, header};
+#[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+#[cfg(feature = "wasm")]
+use tsify::Tsify;
 use url::Url;
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+use wasm_bindgen::{JsCast, JsValue};
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+use wasm_bindgen_futures::JsFuture;
 
 use crate::{
     Alias, AliasCreationOptions, AliasDomain, AliasError, AliasId, AliasPage, AliasRecommendation,
@@ -23,7 +30,9 @@ const MAX_ERROR_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_RENDERED_ERROR_CHARS: usize = 512;
 
 /// Configuration used to connect an [`AliasClient`] to SimpleLogin.
-#[derive(Debug)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AliasClientSettings {
     /// SimpleLogin base URL, without an API path.
     pub base_url: String,
@@ -64,8 +73,10 @@ impl AliasClient {
     pub fn new(settings: AliasClientSettings) -> Result<Self, AliasError> {
         let base_url = validate_base_url(&settings.base_url)?;
         validate_token(&settings.api_token)?;
-        let http = bitwarden_api_base::new_http_client_builder()
-            .redirect(Policy::none())
+        let http = bitwarden_api_base::new_http_client_builder();
+        #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
+        let http = http.redirect(Policy::none());
+        let http = http
             .build()
             .map_err(|error| AliasError::Transport(error.without_url()))?;
 
@@ -423,6 +434,7 @@ impl AliasClient {
             .header(header::ACCEPT, "application/json"))
     }
 
+    #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
     async fn send_json<T: DeserializeOwned>(
         &self,
         builder: reqwest::RequestBuilder,
@@ -464,6 +476,108 @@ impl AliasClient {
             return Err(AliasError::UnexpectedContentType);
         }
         let body = read_bounded(response, MAX_SUCCESS_RESPONSE_BYTES).await?;
+        serde_json::from_slice(&body).map_err(AliasError::InvalidResponse)
+    }
+
+    #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+    async fn send_json<T: DeserializeOwned>(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<T, AliasError> {
+        let request = builder
+            .build()
+            .map_err(|_| AliasError::InvalidRequest("provider request could not be built"))?;
+        let init = web_sys::RequestInit::new();
+        init.set_method(request.method().as_str());
+        init.set_redirect(web_sys::RequestRedirect::Manual);
+        init.set_credentials(web_sys::RequestCredentials::Omit);
+
+        let headers = web_sys::Headers::new()
+            .map_err(|_| wasm_fetch_error("provider request headers unavailable"))?;
+        for (name, value) in request.headers() {
+            headers
+                .append(
+                    name.as_str(),
+                    value.to_str().map_err(|_| {
+                        AliasError::InvalidRequest("invalid provider request header")
+                    })?,
+                )
+                .map_err(|_| wasm_fetch_error("provider request header rejected"))?;
+        }
+        init.set_headers_headers(&headers);
+
+        let request_body = request
+            .body()
+            .and_then(reqwest::Body::as_bytes)
+            .map(js_sys::Uint8Array::from);
+        if let Some(body) = request_body.as_ref() {
+            init.set_body_opt_u8_array(Some(body));
+        }
+
+        let request = web_sys::Request::new_with_str_and_init(request.url().as_str(), &init)
+            .map_err(|_| wasm_fetch_error("provider request unavailable"))?;
+        let global = js_sys::global();
+        let fetch = js_sys::Reflect::get(&global, &JsValue::from_str("fetch"))
+            .map_err(|_| wasm_fetch_error("provider fetch unavailable"))?;
+        if !fetch.is_function() {
+            return Err(wasm_fetch_error("provider fetch unavailable"));
+        }
+        // The host fetch implementation can originate in a different JavaScript realm. Its
+        // callable contract is checked above, so avoid a realm-local `instanceof Function` test.
+        let fetch = fetch.unchecked_into::<js_sys::Function>();
+        let response = fetch
+            .call1(&global, &request)
+            .map_err(|_| wasm_fetch_error("provider fetch rejected"))?;
+        // `Promise::resolve` safely adopts promises and thenables across JavaScript realms.
+        let response = JsFuture::from(js_sys::Promise::resolve(&response))
+            .await
+            .map_err(|_| wasm_fetch_error("provider fetch failed"))?
+            .unchecked_into::<web_sys::Response>();
+
+        let status = response.status();
+        if status == 0 || (300..400).contains(&status) {
+            return Err(AliasError::RedirectRejected { status });
+        }
+        let status = StatusCode::from_u16(status)
+            .map_err(|_| AliasError::InvalidResponseValue("invalid provider response status"))?;
+        let response_headers = response.headers();
+        let retry_after_seconds = response_headers
+            .get(header::RETRY_AFTER.as_str())
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse().ok());
+        let limit = if status.is_success() {
+            MAX_SUCCESS_RESPONSE_BYTES
+        } else {
+            MAX_ERROR_RESPONSE_BYTES
+        };
+        let body = read_bounded_wasm(response, limit).await?;
+
+        if !status.is_success() {
+            if status == StatusCode::UNAUTHORIZED {
+                return Err(AliasError::AuthenticationFailed);
+            }
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                return Err(AliasError::RateLimited {
+                    retry_after_seconds,
+                });
+            }
+            return Err(AliasError::Provider {
+                status: status.as_u16(),
+                message: render_provider_error(&body, self.inner.api_token.expose()),
+            });
+        }
+
+        let content_type = response_headers
+            .get(header::CONTENT_TYPE.as_str())
+            .ok()
+            .flatten();
+        if !content_type
+            .as_deref()
+            .is_some_and(is_json_content_type_str)
+        {
+            return Err(AliasError::UnexpectedContentType);
+        }
         serde_json::from_slice(&body).map_err(AliasError::InvalidResponse)
     }
 }
@@ -517,6 +631,7 @@ fn validate_token(token: &SensitiveString) -> Result<(), AliasError> {
     Ok(())
 }
 
+#[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
 fn is_json_content_type(value: Option<&HeaderValue>) -> bool {
     value
         .and_then(|value| value.to_str().ok())
@@ -526,6 +641,17 @@ fn is_json_content_type(value: Option<&HeaderValue>) -> bool {
         .is_some_and(|value| value == "application/json" || value.ends_with("+json"))
 }
 
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+fn is_json_content_type_str(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|value| value == "application/json" || value.ends_with("+json"))
+}
+
+#[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
 async fn read_bounded(
     mut response: reqwest::Response,
     limit: usize,
@@ -547,6 +673,58 @@ async fn read_bounded(
             return Err(AliasError::ResponseTooLarge { limit_bytes: limit });
         }
         body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+fn wasm_fetch_error(message: &'static str) -> AliasError {
+    AliasError::InvalidResponseValue(message)
+}
+
+#[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+async fn read_bounded_wasm(
+    response: web_sys::Response,
+    limit: usize,
+) -> Result<Vec<u8>, AliasError> {
+    if response
+        .headers()
+        .get(header::CONTENT_LENGTH.as_str())
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|content_length| content_length > limit)
+    {
+        return Err(AliasError::ResponseTooLarge { limit_bytes: limit });
+    }
+
+    let Some(stream) = response.body() else {
+        return Ok(Vec::new());
+    };
+    // `get_reader` is specified to return a default reader. Avoid an `instanceof` check here:
+    // consumers such as Jest and browser extensions can execute the SDK across JavaScript realms,
+    // where an otherwise-valid reader fails a realm-local constructor identity check.
+    let reader = stream
+        .get_reader()
+        .unchecked_into::<web_sys::ReadableStreamDefaultReader>();
+    let mut body = Vec::new();
+    loop {
+        let result = JsFuture::from(reader.read())
+            .await
+            .map_err(|_| wasm_fetch_error("provider response stream failed"))?
+            .unchecked_into::<web_sys::ReadableStreamReadResult>();
+        if result.get_done().unwrap_or(false) {
+            break;
+        }
+        let chunk = js_sys::Uint8Array::new(&result.get_value());
+        let chunk_len = chunk.length() as usize;
+        if body.len().saturating_add(chunk_len) > limit {
+            let _ = reader.cancel();
+            return Err(AliasError::ResponseTooLarge { limit_bytes: limit });
+        }
+        let start = body.len();
+        body.resize(start + chunk_len, 0);
+        chunk.copy_to(&mut body[start..]);
     }
     Ok(body)
 }

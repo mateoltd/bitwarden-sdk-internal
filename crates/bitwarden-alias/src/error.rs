@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 /// Errors returned by alias lifecycle operations.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Error), uniffi(flat_error))]
 #[derive(Debug, Error)]
 pub enum AliasError {
     /// Client settings or an operation request is invalid.
@@ -54,4 +55,13 @@ pub enum AliasError {
     /// The HTTP request failed. URLs are removed before this error is retained or rendered.
     #[error("alias provider transport failed: {0}")]
     Transport(#[source] reqwest::Error),
+}
+
+#[cfg(feature = "wasm")]
+impl From<AliasError> for wasm_bindgen::JsValue {
+    fn from(error: AliasError) -> Self {
+        let js_error = js_sys::Error::new(&error.to_string());
+        js_error.set_name("AliasError");
+        js_error.into()
+    }
 }

@@ -32,6 +32,7 @@ performance-tracing = []
 
 [dependencies]
 async-trait = { workspace = true }
+bitwarden-alias = { workspace = true, features = ["wasm"] }
 bitwarden-commercial-vault = { workspace = true, optional = true, features = [
     "wasm",
 ] }
@@ -52,6 +53,7 @@ bitwarden-random = { workspace = true, features = ["wasm"] }
 bitwarden-send = { workspace = true, features = ["wasm"] }
 bitwarden-server-communication-config = { workspace = true, features = ["wasm"] }
 bitwarden-shared-unlock = { workspace = true, features = ["wasm"] }
+bitwarden-sensitive-value = { workspace = true, features = ["wasm"] }
 bitwarden-ssh = { workspace = true, features = ["wasm"] }
 bitwarden-state = { workspace = true, features = ["wasm"] }
 bitwarden-threading = { workspace = true }
