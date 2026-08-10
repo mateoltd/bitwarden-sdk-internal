@@ -15,14 +15,17 @@ license = "GPL-3.0-only OR LicenseRef-Bitwarden-SDK"
 keywords.workspace = true
 
 [features]
+alias = ["dep:bitwarden-alias", "dep:bitwarden-sensitive-value"]
 uniffi = ["dep:uniffi"]
 wasm = ["bitwarden-core/wasm", "dep:tsify", "dep:wasm-bindgen"]
 
 [dependencies]
+bitwarden-alias = { workspace = true, optional = true }
 bitwarden-core = { workspace = true, features = ["internal"] }
 bitwarden-crypto = { workspace = true }
 bitwarden-error = { workspace = true }
 bitwarden-random = { workspace = true }
+bitwarden-sensitive-value = { workspace = true, optional = true }
 password-rules-parser = { workspace = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
