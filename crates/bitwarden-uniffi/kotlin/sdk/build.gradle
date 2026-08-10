@@ -120,6 +120,13 @@ publishing {
                 name.set("Bitwarden SDK for Android")
                 description.set(aboutThisPackage)
                 url.set("https://github.com/bitwarden/sdk-internal")
+                licenses {
+                    license {
+                        name.set("GNU General Public License v3.0 only")
+                        url.set("https://www.gnu.org/licenses/gpl-3.0-standalone.html")
+                        distribution.set("repo")
+                    }
+                }
             }
 
             afterEvaluate {
