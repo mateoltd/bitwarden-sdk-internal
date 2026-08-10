@@ -4,6 +4,7 @@ import {
   ContactId,
   CustomDomainUpdateRequest,
   OptionalSensitiveStringUpdate,
+  SensitiveString,
 } from "@bitwarden/sdk-internal";
 import { runInThisContext } from "node:vm";
 
@@ -11,7 +12,12 @@ const baseUrl = process.env.SIMPLELOGIN_API_URL;
 const apiToken = process.env.SIMPLELOGIN_API_TOKEN;
 const liveTest = baseUrl && apiToken ? test : test.skip;
 
-const setText = (value: string): OptionalSensitiveStringUpdate => ({ type: "set", value });
+// SensitiveString is a compile-time brand over the string value accepted by the WASM ABI.
+const sensitive = (value: string): SensitiveString => value as SensitiveString;
+const setText = (value: string): OptionalSensitiveStringUpdate => ({
+  type: "set",
+  value: sensitive(value),
+});
 
 liveTest(
   "executes the complete alias lifecycle against real SimpleLogin",
@@ -28,12 +34,12 @@ liveTest(
     const unique = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const hostname = `wasm-${unique}.integration.test`;
     const searchText = `wasm-live-${unique}`;
-    const client = new AliasClient({ base_url: baseUrl!, api_token: apiToken! });
+    const client = new AliasClient({ base_url: baseUrl!, api_token: sensitive(apiToken!) });
     const aliasIds: AliasId[] = [];
     let contactId: ContactId | undefined;
 
     try {
-      const options = await client.get_alias_options(hostname);
+      const options = await client.get_alias_options(sensitive(hostname));
       expect(options.can_create).toBe(true);
       expect(options.suffixes.length).toBeGreaterThan(0);
 
@@ -44,9 +50,9 @@ liveTest(
       expect(mailbox).toBeDefined();
 
       const alias = await client.create_random_alias({
-        hostname,
+        hostname: sensitive(hostname),
         mode: undefined,
-        note: searchText,
+        note: sensitive(searchText),
       });
       aliasIds.push(alias.id);
       expect(typeof alias.id).toBe("bigint");
@@ -54,7 +60,7 @@ liveTest(
       const listed = await client.list_aliases(0);
       expect(listed.aliases.some((candidate) => candidate.id === alias.id)).toBe(true);
       const searched = await client.search_aliases({
-        query: searchText,
+        query: sensitive(searchText),
         page: 0,
         filter: undefined,
       });
@@ -84,11 +90,11 @@ liveTest(
       expect((await client.disable_alias(alias.id)).enabled).toBe(false);
       expect((await client.enable_alias(alias.id)).enabled).toBe(true);
       expect((await client.set_alias_enabled(alias.id, true)).enabled).toBe(true);
-      expect((await client.get_alias_recommendation(hostname))?.alias).toBe(alias.email);
+      expect((await client.get_alias_recommendation(sensitive(hostname)))?.alias).toBe(alias.email);
 
       const reverse = await client.create_reverse_alias(
         alias.id,
-        `wasm-contact-${unique}@example.net`,
+        sensitive(`wasm-contact-${unique}@example.net`),
       );
       contactId = reverse.id;
       expect(typeof reverse.id).toBe("bigint");
@@ -123,8 +129,8 @@ liveTest(
         signed_suffix: suffix!.signed_suffix,
         mailbox_ids: [mailbox!.id],
         hostname: undefined,
-        note: "WASM custom alias",
-        name: "WASM custom",
+        note: sensitive("WASM custom alias"),
+        name: sensitive("WASM custom"),
       });
       aliasIds.push(custom.id);
       expect(custom.id).not.toBe(alias.id);
