@@ -361,3 +361,107 @@ impl AliasClient {
         self.0.delete_contact(contact_id).await
     }
 }
+
+#[cfg(test)]
+mod security_conformance {
+    use bitwarden_alias::{AliasProvider, MailboxId, MailboxRef};
+    use serde_json::Value;
+
+    use super::*;
+
+    const VECTORS: &str = include_str!("../../../formal/alias-security/conformance-vectors.json");
+
+    fn alias(id: u64, address: &str) -> Alias {
+        let mailbox = MailboxRef {
+            id: MailboxId(1),
+            email: SensitiveString::from("owner@example.test"),
+        };
+        Alias {
+            id: AliasId(id),
+            email: SensitiveString::from(address),
+            creation_date: "2026-08-12T00:00:00Z".to_owned(),
+            creation_timestamp: 1,
+            enabled: true,
+            note: None,
+            name: None,
+            nb_forward: 0,
+            nb_block: 0,
+            nb_reply: 0,
+            mailbox,
+            mailboxes: Vec::new(),
+            support_pgp: false,
+            disable_pgp: false,
+            latest_activity: None,
+            pinned: false,
+        }
+    }
+
+    fn identity(value: &Value) -> AliasProviderIdentity {
+        AliasProviderIdentity {
+            provider: AliasProvider::SimpleLogin,
+            instance: value["instance"].as_str().expect("instance").to_owned(),
+            connection_id: value["connectionId"]
+                .as_str()
+                .expect("connection ID")
+                .to_owned(),
+        }
+    }
+
+    #[test]
+    fn uniffi_exports_consume_the_canonical_reference_and_migration_vectors() {
+        let vectors: Value = serde_json::from_str(VECTORS).expect("formal vectors must parse");
+        let primary = identity(&vectors["identities"]["primary"]);
+        let second = identity(&vectors["identities"]["sameOriginSecondAccount"]);
+        let reference = &vectors["referenceVectors"][0];
+        let encoded = create_alias_reference(
+            primary.clone(),
+            alias(
+                reference["aliasId"].as_u64().expect("alias ID"),
+                reference["address"].as_str().expect("address"),
+            ),
+        )
+        .expect("UniFFI reference wrapper must encode");
+        assert_eq!(
+            encoded.expose().as_str(),
+            reference["expectedCanonical"]
+                .as_str()
+                .expect("expected canonical reference")
+        );
+        let encoded_value = encoded.expose().to_owned();
+        let parsed = parse_alias_reference(SensitiveString::from(encoded_value))
+            .expect("UniFFI wrapper must parse");
+        assert_eq!(parsed.provider_identity(), primary);
+        assert_eq!(
+            serialize_alias_reference(parsed)
+                .expect("UniFFI wrapper must serialize")
+                .expose(),
+            encoded.expose()
+        );
+
+        let unique = vectors["migrationVectors"]
+            .as_array()
+            .expect("migration vectors")
+            .iter()
+            .find(|vector| vector["name"] == "legacy-unique-connection")
+            .expect("unique migration vector");
+        let legacy_value = unique["input"].as_str().expect("legacy input");
+        assert_eq!(
+            migrate_alias_reference(SensitiveString::from(legacy_value), vec![primary])
+                .expect("unique UniFFI migration must succeed")
+                .expose()
+                .as_str(),
+            unique["expectedCanonical"]
+                .as_str()
+                .expect("expected migration")
+        );
+        let error = migrate_alias_reference(
+            SensitiveString::from(legacy_value),
+            vec![identity(&vectors["identities"]["primary"]), second],
+        )
+        .expect_err("ambiguous UniFFI migration must fail");
+        assert!(matches!(
+            error,
+            AliasReferenceError::AmbiguousLegacyReference
+        ));
+    }
+}

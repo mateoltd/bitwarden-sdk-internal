@@ -1,0 +1,163 @@
+{
+  "contractVersion": 1,
+  "modelRevision": "alias-security-v1",
+  "modelFiles": [
+    "AliasVault.tla",
+    "AliasVault.cfg",
+    "AliasLifecycle.tla",
+    "AliasLifecycle.cfg",
+    "AliasLifecycleQuiescent.cfg"
+  ],
+  "modelSha256": "a98ba7b14f16c60550ed9b1b40cfa77769752042213a6237d837f7dec3688893",
+  "referenceSchema": {
+    "version": 2,
+    "legacyVersion": 1,
+    "vaultFieldName": "bitwarden.alias.reference",
+    "orderedFields": [
+      "version",
+      "provider",
+      "providerInstance",
+      "connectionId",
+      "aliasId",
+      "address"
+    ],
+    "forbiddenFields": ["apiToken", "token", "credential", "password", "signedSuffix"],
+    "credentialSentinel": "formal-secret-must-never-cross-a-reference-boundary"
+  },
+  "identities": {
+    "primary": {
+      "provider": "simplelogin",
+      "instance": "https://aliases.example.test/",
+      "connectionId": "11111111-1111-4111-8111-111111111111"
+    },
+    "sameOriginSecondAccount": {
+      "provider": "simplelogin",
+      "instance": "https://aliases.example.test/",
+      "connectionId": "22222222-2222-4222-8222-222222222222"
+    }
+  },
+  "referenceVectors": [
+    {
+      "name": "current-reference-canonical-order-and-scope",
+      "identity": "primary",
+      "aliasId": 7,
+      "address": "first@example.test",
+      "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":7,\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "same-provider-id-isolated-by-account",
+      "identity": "sameOriginSecondAccount",
+      "aliasId": 7,
+      "address": "second@example.test",
+      "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"22222222-2222-4222-8222-222222222222\",\"aliasId\":7,\"address\":\"second@example.test\"}"
+    }
+  ],
+  "migrationVectors": [
+    {
+      "name": "legacy-unique-connection",
+      "input": "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":41,\"address\":\"legacy@example.test\"}",
+      "connections": ["primary"],
+      "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":41,\"address\":\"legacy@example.test\"}"
+    },
+    {
+      "name": "legacy-same-origin-account-ambiguity",
+      "input": "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":41,\"address\":\"legacy@example.test\"}",
+      "connections": ["primary", "sameOriginSecondAccount"],
+      "expectedError": "legacy alias reference matches multiple provider connections"
+    },
+    {
+      "name": "current-reference-migration-is-idempotent",
+      "input": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":41,\"address\":\"legacy@example.test\"}",
+      "connections": ["sameOriginSecondAccount"],
+      "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":41,\"address\":\"legacy@example.test\"}"
+    }
+  ],
+  "reconciliationVectors": [
+    {
+      "name": "bind-once-and-preserve-unrelated-items",
+      "identity": "primary",
+      "aliases": [{ "id": 7, "address": "first@example.test" }],
+      "ciphers": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "username": "FIRST@example.test",
+          "name": "Alias login",
+          "notes": "unrelated target notes",
+          "customFieldName": "unrelated.custom",
+          "customFieldValue": "preserve-target-field"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "username": "owner@example.test",
+          "name": "Ordinary login",
+          "notes": "preserve-entire-cipher",
+          "customFieldName": "ordinary.custom",
+          "customFieldValue": "preserve-ordinary-field"
+        }
+      ],
+      "expected": {
+        "proposedRepairs": 1,
+        "changedCipherIds": ["00000000-0000-4000-8000-000000000001"],
+        "unchangedActionsOnReplay": 1,
+        "actionsAfterReplan": 0
+      }
+    }
+  ],
+  "lifecycleTraces": [
+    {
+      "name": "already-disabled-is-a-read-only-success",
+      "aliasId": 201,
+      "desiredEnabled": false,
+      "initialEnabled": false,
+      "steps": [{ "kind": "get", "providerEnabledAfter": false }],
+      "expectedEnabled": false,
+      "expectedToggleCount": 0
+    },
+    {
+      "name": "replayed-toggle-responses-require-fresh-read-convergence",
+      "aliasId": 202,
+      "desiredEnabled": false,
+      "initialEnabled": true,
+      "steps": [
+        { "kind": "get", "providerEnabledAfter": true },
+        { "kind": "toggle", "providerEnabledAfter": true, "responseEnabled": false },
+        { "kind": "get", "providerEnabledAfter": true },
+        { "kind": "toggle", "providerEnabledAfter": false, "responseEnabled": true },
+        { "kind": "get", "providerEnabledAfter": false }
+      ],
+      "expectedEnabled": false,
+      "expectedToggleCount": 2
+    },
+    {
+      "name": "continuous-interference-terminates-without-false-success",
+      "aliasId": 203,
+      "desiredEnabled": false,
+      "initialEnabled": true,
+      "steps": [
+        { "kind": "get", "providerEnabledAfter": true },
+        { "kind": "toggle", "providerEnabledAfter": true, "responseEnabled": false },
+        { "kind": "get", "providerEnabledAfter": true },
+        { "kind": "toggle", "providerEnabledAfter": true, "responseEnabled": false },
+        { "kind": "get", "providerEnabledAfter": true },
+        { "kind": "toggle", "providerEnabledAfter": true, "responseEnabled": false },
+        { "kind": "get", "providerEnabledAfter": true }
+      ],
+      "expectedError": "alias provider alias state change did not converge because the resource changed concurrently",
+      "expectedToggleCount": 3
+    }
+  ],
+  "operationSemantics": {
+    "disable": {
+      "providerResource": "retained",
+      "vaultCipher": "unchanged",
+      "successEvidence": "fresh-read"
+    },
+    "delete": {
+      "confirmedAliasId": 301,
+      "unknownAliasId": 302,
+      "providerResource": "removed-on-provider-confirmation",
+      "vaultCipher": "unchanged",
+      "transportFailure": "unknown-no-automatic-replay"
+    }
+  }
+}

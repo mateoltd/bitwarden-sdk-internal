@@ -219,15 +219,23 @@ async fn updates_sets_state_and_deletes_by_stable_id() {
         .mount(&server)
         .await;
 
+    let alias_61_enabled = Arc::new(AtomicBool::new(true));
+    let state = Arc::clone(&alias_61_enabled);
     Mock::given(matchers::method("GET"))
         .and(matchers::path("/api/aliases/61"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(alias_json(61, true)))
-        .expect(1)
+        .respond_with(move |_: &wiremock::Request| {
+            ResponseTemplate::new(200).set_body_json(alias_json(61, state.load(Ordering::SeqCst)))
+        })
+        .expect(2)
         .mount(&server)
         .await;
+    let state = Arc::clone(&alias_61_enabled);
     Mock::given(matchers::method("POST"))
         .and(matchers::path("/api/aliases/61/toggle"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"enabled": false})))
+        .respond_with(move |_: &wiremock::Request| {
+            state.store(false, Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_json(json!({"enabled": false}))
+        })
         .expect(1)
         .mount(&server)
         .await;
@@ -631,7 +639,7 @@ async fn serializes_concurrent_explicit_state_changes() {
                 .set_delay(Duration::from_millis(50))
                 .set_body_json(alias_json(91, state.load(Ordering::SeqCst)))
         })
-        .expect(2)
+        .expect(3)
         .mount(&server)
         .await;
 
@@ -783,7 +791,7 @@ async fn converges_after_a_cross_process_alias_toggle_race() {
         .respond_with(move |_: &wiremock::Request| {
             ResponseTemplate::new(200).set_body_json(alias_json(103, state.load(Ordering::SeqCst)))
         })
-        .expect(2)
+        .expect(3)
         .mount(&server)
         .await;
 

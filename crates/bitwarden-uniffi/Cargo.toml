@@ -67,5 +67,8 @@ tracing-oslog = "0.3.0"
 [build-dependencies]
 uniffi = { workspace = true, features = ["build"] }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

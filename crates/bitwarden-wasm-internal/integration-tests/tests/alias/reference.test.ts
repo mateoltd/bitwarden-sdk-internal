@@ -17,11 +17,41 @@ import {
   plan_alias_reconciliation,
   serialize_alias_reference,
 } from "@bitwarden/sdk-internal";
+import { readFileSync } from "node:fs";
 
-const CONNECTION_ONE = "11111111-1111-4111-8111-111111111111";
-const CONNECTION_TWO = "22222222-2222-4222-8222-222222222222";
-const INSTANCE = "https://aliases.example.test/";
-const REFERENCE_FIELD = "bitwarden.alias.reference";
+type ConformanceVectors = {
+  referenceSchema: {
+    vaultFieldName: string;
+    credentialSentinel: string;
+  };
+  identities: {
+    primary: { instance: string; connectionId: string };
+    sameOriginSecondAccount: { instance: string; connectionId: string };
+  };
+  referenceVectors: Array<{
+    identity: string;
+    aliasId: number;
+    address: string;
+    expectedCanonical: string;
+  }>;
+  migrationVectors: Array<{
+    name: string;
+    input: string;
+    expectedCanonical?: string;
+  }>;
+};
+
+const conformance = JSON.parse(
+  readFileSync(
+    new URL("../../../../../formal/alias-security/conformance-vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as ConformanceVectors;
+
+const CONNECTION_ONE = conformance.identities.primary.connectionId;
+const CONNECTION_TWO = conformance.identities.sameOriginSecondAccount.connectionId;
+const INSTANCE = conformance.identities.primary.instance;
+const REFERENCE_FIELD = conformance.referenceSchema.vaultFieldName;
 const NOW = "2026-08-11T10:00:00Z";
 
 const sensitive = (value: string): SensitiveString => value as SensitiveString;
@@ -100,17 +130,16 @@ const cipher = (
 });
 
 test("uses one canonical connection-scoped reference across the WASM boundary", () => {
+  const referenceVector = conformance.referenceVectors[0];
   const provider = identity(CONNECTION_ONE);
-  const providerAlias = alias(7, "first@example.test");
+  const providerAlias = alias(referenceVector.aliasId, referenceVector.address);
   const encoded = create_alias_reference(provider, providerAlias);
 
-  expect(encoded).toBe(
-    `{"version":2,"provider":"simplelogin","providerInstance":"${INSTANCE}",` +
-      `"connectionId":"${CONNECTION_ONE}","aliasId":7,"address":"first@example.test"}`,
-  );
+  expect(encoded).toBe(referenceVector.expectedCanonical);
+  expect(encoded).not.toContain(conformance.referenceSchema.credentialSentinel);
   const parsed = parse_alias_reference(encoded);
   expect(parsed.connectionId).toBe(CONNECTION_ONE);
-  expect(parsed.aliasId).toBe(7n);
+  expect(parsed.aliasId).toBe(BigInt(referenceVector.aliasId));
   expect(serialize_alias_reference(parsed)).toBe(encoded);
 
   const bound = bind_alias_reference(encoded, cipher(1, "first@example.test"));
@@ -146,9 +175,11 @@ test("isolates overlapping provider IDs for two accounts on one origin", () => {
 });
 
 test("requires explicit, unambiguous v1 migration and rewrites the reserved field", () => {
-  const legacy =
-    '{"version":1,"provider":"simplelogin","providerInstance":"https://aliases.example.test/",' +
-    '"aliasId":41,"address":"legacy@example.test"}';
+  const migrationVector = conformance.migrationVectors.find(
+    (vector) => vector.name === "legacy-unique-connection",
+  );
+  expect(migrationVector).toBeDefined();
+  const legacy = migrationVector!.input;
 
   expect(() => parse_alias_reference(sensitive(legacy))).toThrow("explicit connection migration");
   expect(() =>
@@ -159,6 +190,7 @@ test("requires explicit, unambiguous v1 migration and rewrites the reserved fiel
   ).toThrow("matches multiple provider connections");
 
   const migrated = migrate_alias_reference(sensitive(legacy), [identity(CONNECTION_ONE)]);
+  expect(migrated).toBe(migrationVector!.expectedCanonical);
   expect(parse_alias_reference(migrated).connectionId).toBe(CONNECTION_ONE);
   expect(migrate_alias_reference(migrated, [identity(CONNECTION_TWO)])).toBe(migrated);
 

@@ -374,8 +374,8 @@ impl AliasClient {
         validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let state_lock = self.alias_state_lock(alias_id);
         let _guard = state_lock.lock().await;
+        let mut current = self.get_alias(alias_id).await?;
         for _ in 0..MAX_TOGGLE_CONVERGENCE_ATTEMPTS {
-            let current = self.get_alias(alias_id).await?;
             if current.enabled == enabled {
                 return Ok(AliasState {
                     id: alias_id,
@@ -384,14 +384,23 @@ impl AliasClient {
             }
 
             let builder = self.request(Method::POST, &format!("api/aliases/{alias_id}/toggle"))?;
-            let response: ToggleAliasResponse =
-                self.send_json(builder, Some("alias state change")).await?;
-            if response.enabled == enabled {
-                return Ok(AliasState {
-                    id: alias_id,
-                    enabled: response.enabled,
-                });
-            }
+            // The toggle response is validated but is not authoritative for convergence. A
+            // delayed/replayed response, or another actor toggling between mutation and response,
+            // must not make this method report an unobserved final state.
+            let ToggleAliasResponse {
+                enabled: _reported_enabled,
+            } = self.send_json(builder, Some("alias state change")).await?;
+            current = self.get_alias(alias_id).await.map_err(|_| {
+                AliasError::MutationCommittedButRefreshFailed {
+                    operation: "alias state change",
+                }
+            })?;
+        }
+        if current.enabled == enabled {
+            return Ok(AliasState {
+                id: alias_id,
+                enabled,
+            });
         }
         Err(AliasError::ConcurrentMutation {
             operation: "alias state change",
