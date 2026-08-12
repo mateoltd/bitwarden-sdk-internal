@@ -76,12 +76,21 @@ while IFS= read -r component_config; do
     }
     cp "$host_source" "$temporary_directory/generated/$relative_source"
     component_count=$((component_count + 1))
-done < <(rg -l '^android = true$' "$repository_root/crates" -g uniffi.toml | LC_ALL=C sort)
+done < <(
+    find "$repository_root/crates" -type f -name uniffi.toml \
+        -exec grep -l '^android = true$' {} + \
+        | LC_ALL=C sort
+)
 [[ "$component_count" -gt 0 ]] || {
     echo "Kotlin host artifact gate failed: no Android UniFFI components were found" >&2
     exit 1
 }
-if rg -n '^import android\.' "$temporary_directory/generated"; then
+android_imports="$(
+    find "$temporary_directory/generated" -type f -name '*.kt' \
+        -exec grep -nH '^import android\.' {} + || true
+)"
+if [[ -n "$android_imports" ]]; then
+    printf '%s\n' "$android_imports" >&2
     echo "Kotlin host artifact gate failed: Android-only imports remain in JVM bindings" >&2
     exit 1
 fi
