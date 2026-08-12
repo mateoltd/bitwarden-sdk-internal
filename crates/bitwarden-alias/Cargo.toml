@@ -11,6 +11,9 @@ license = "GPL-3.0-only"
 readme = "README.md"
 keywords.workspace = true
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["web-sys"] # Imported only by the wasm32 transport implementation
+
 [features]
 default = []
 uniffi = [
@@ -62,6 +65,7 @@ web-sys = { version = "0.3.91", optional = true, features = [
 ] }
 
 [dev-dependencies]
+sha2 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wiremock = { workspace = true }
 

@@ -1,5 +1,26 @@
 import { AliasClient, SensitiveString } from "@bitwarden/sdk-internal";
+import { readFileSync } from "node:fs";
 import { runInNewContext, runInThisContext } from "node:vm";
+
+type LifecycleTrace = {
+  name: string;
+  aliasId: number;
+  desiredEnabled: boolean;
+  steps: Array<{
+    kind: "get" | "toggle";
+    providerEnabledAfter: boolean;
+    responseEnabled?: boolean;
+  }>;
+  expectedEnabled?: boolean;
+  expectedToggleCount: number;
+};
+
+const conformance = JSON.parse(
+  readFileSync(
+    new URL("../../../../../formal/alias-security/conformance-vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as { lifecycleTraces: LifecycleTrace[] };
 
 const sensitive = (value: string): SensitiveString => value as SensitiveString;
 const token = "wasm-adversarial-token";
@@ -263,11 +284,57 @@ test("serializes concurrent explicit state changes across the WASM boundary", as
     expect(first.enabled).toBe(false);
     expect(second.enabled).toBe(false);
     expect(enabled).toBe(false);
-    expect(gets).toBe(2);
+    expect(gets).toBe(3);
     expect(toggles).toBe(1);
   } finally {
     firstClient.free();
     secondClient.free();
+    restore();
+  }
+});
+
+test("executes the replayed-response formal trace across the WASM boundary", async () => {
+  const trace = conformance.lifecycleTraces.find(
+    (candidate) => candidate.name === "replayed-toggle-responses-require-fresh-read-convergence",
+  );
+  expect(trace).toBeDefined();
+  let cursor = 0;
+  let providerEnabled = true;
+  let toggles = 0;
+  const restore = installCrossRealmFetch((request) => {
+    const step = trace!.steps[cursor++];
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === `/api/aliases/${trace!.aliasId}`) {
+      expect(step.kind).toBe("get");
+      providerEnabled = step.providerEnabledAfter;
+      return new Response(JSON.stringify(aliasJson(trace!.aliasId, providerEnabled)), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (request.method === "POST" && url.pathname === `/api/aliases/${trace!.aliasId}/toggle`) {
+      expect(step.kind).toBe("toggle");
+      toggles += 1;
+      providerEnabled = step.providerEnabledAfter;
+      return new Response(JSON.stringify({ enabled: step.responseEnabled }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ error: "unexpected request" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+  const client = newClient();
+  try {
+    const result = await client.set_alias_enabled(BigInt(trace!.aliasId), trace!.desiredEnabled);
+    expect(result.enabled).toBe(trace!.expectedEnabled);
+    expect(providerEnabled).toBe(trace!.expectedEnabled);
+    expect(toggles).toBe(trace!.expectedToggleCount);
+    expect(cursor).toBe(trace!.steps.length);
+  } finally {
+    client.free();
     restore();
   }
 });
