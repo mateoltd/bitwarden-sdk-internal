@@ -36,8 +36,26 @@ fun main() {
     )
 
     val encoded = createAliasReference(identity, providerAlias)
+    val expected =
+        "{\"version\":1,\"provider\":\"simplelogin\"," +
+            "\"providerInstance\":\"https://aliases.example.test/\"," +
+            "\"connectionId\":\"$connectionId\",\"aliasId\":7," +
+            "\"address\":\"alias@example.test\"}"
     val parsed = parseAliasReference(encoded)
+    check(encoded == expected)
+    check(parsed.version == 1u)
     check(parsed.connectionId == connectionId)
     check(serializeAliasReference(parsed) == encoded)
+    rejectedReferences(encoded).forEach { rejected ->
+        check(runCatching { parseAliasReference(rejected) }.isFailure)
+    }
     println("Kotlin alias SDK clean-room consumer passed")
 }
+
+private fun rejectedReferences(canonical: String) = listOf(
+    canonical.replace("\"version\":1,", ""),
+    canonical.replace("\"version\":1", "\"version\":0"),
+    "{\"version\":",
+    canonical.replace("\"version\":1", "\"version\":2"),
+    canonical.replace("\"version\":1", "\"version\":4294967295"),
+)

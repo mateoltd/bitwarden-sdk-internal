@@ -5,6 +5,8 @@ REPOSITORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FORBIDDEN_PACKAGES='^bitwarden-(commercial-vault|pam|sm) '
 FORBIDDEN_EXPORTS='CommercialPasswordManagerClient|CommercialVaultClient|PamClient|PAMClient|SecretsManagerClient|bitwarden[_-](commercial|license|pam|sm)'
 FORBIDDEN_ALIAS_MIGRATION_EXPORTS='migrate_alias_reference|migrate_cipher_alias_reference|migrateAliasReference|migrateCipherAliasReference|AliasReferenceMigration|AliasCipherMigration'
+FORBIDDEN_ALIAS_DEVELOPMENT_EXPORTS='AliasReferenceV2|alias_reference_v2|aliasReferenceV2|LegacyAliasReference|LEGACY_ALIAS_REFERENCE_VERSION'
+FORBIDDEN_ALIAS_EXPORTS="$FORBIDDEN_ALIAS_MIGRATION_EXPORTS|$FORBIDDEN_ALIAS_DEVELOPMENT_EXPORTS"
 
 fail() {
     echo "OSS artifact boundary check failed: $*" >&2
@@ -14,16 +16,24 @@ fail() {
 check_release_provenance() {
     local path="$1"
     local expected_source_commit
+    local expected_schema_version
     local expected_version
 
     [[ -f "$path/VERSION" ]] || fail "$path/VERSION is missing"
     [[ -f "$path/PACKAGE_VERSION" ]] || fail "$path/PACKAGE_VERSION is missing"
+    [[ -f "$path/ALIAS_REFERENCE_SCHEMA_VERSION" ]] \
+        || fail "$path/ALIAS_REFERENCE_SCHEMA_VERSION is missing"
     expected_source_commit="$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)"
     [[ "$(tr -d '[:space:]' <"$path/VERSION")" == "$expected_source_commit" ]] \
         || fail "$path/VERSION does not identify the source commit"
     expected_version="$("$REPOSITORY_ROOT/scripts/alias-sdk/read-release-version.sh")"
     [[ "$(tr -d '[:space:]' <"$path/PACKAGE_VERSION")" == "$expected_version" ]] \
         || fail "$path/PACKAGE_VERSION does not identify the release version"
+    expected_schema_version="$(tr -d '[:space:]' \
+        <"$REPOSITORY_ROOT/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"
+    [[ "$(tr -d '[:space:]' <"$path/ALIAS_REFERENCE_SCHEMA_VERSION")" == \
+        "$expected_schema_version" ]] \
+        || fail "$path/ALIAS_REFERENCE_SCHEMA_VERSION does not identify the current schema"
 }
 
 check_dependency_graph() {
@@ -89,7 +99,7 @@ check_generated_exports() {
 
     forbidden="$(
         find "$path" -type f \( -name '*.d.ts' -o -name '*.js' -o -name '*.swift' -o -name '*.kt' \) \
-            -exec grep -El "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -El "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
@@ -112,6 +122,10 @@ check_wasm() {
         || fail "$path/bitwarden_wasm_internal_bg.wasm is missing"
     grep -Eq '"license": "GPL-3.0-only"' "$path/package.json" \
         || fail "$path/package.json must declare GPL-3.0-only"
+    [[ "$(node -p "require('$path/package.json').aliasReferenceSchemaVersion")" == \
+        "$(tr -d '[:space:]' \
+            <"$REPOSITORY_ROOT/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")" ]] \
+        || fail "$path/package.json must declare the current alias reference schema"
     [[ "$(node -p "require('$path/package.json').version")" == \
         "$("$REPOSITORY_ROOT/scripts/alias-sdk/read-release-version.sh")" ]] \
         || fail "$path/package.json does not identify the release version"
@@ -128,7 +142,7 @@ check_wasm() {
     check_generated_exports "$path"
     forbidden="$(
         find "$path" -type f \( -name '*.wasm' -o -name '*.js' \) \
-            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
@@ -160,7 +174,7 @@ check_swift() {
     check_generated_exports "$path/Sources/BitwardenSdk"
     forbidden="$(
         find "$path/BitwardenFFI.xcframework" -type f \
-            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
@@ -198,7 +212,7 @@ check_kotlin() {
         || fail "$aar does not contain the GPL text"
     forbidden="$(
         find "$temporary_dir" -type f \( -name '*.class' -o -name '*.so' \) \
-            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
@@ -227,7 +241,7 @@ check_kotlin_host() {
     check_paths "$temporary_dir"
     forbidden="$(
         find "$temporary_dir" -type f -name '*.class' \
-            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2

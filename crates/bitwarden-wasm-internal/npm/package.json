@@ -1,6 +1,7 @@
 {
   "name": "@bitwarden/sdk-internal",
-  "version": "0.2.0-alias-platform.1",
+  "version": "0.2.0-alias-platform.2",
+  "aliasReferenceSchemaVersion": 1,
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",

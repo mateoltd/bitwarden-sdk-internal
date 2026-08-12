@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 
 type ConformanceVectors = {
   referenceSchema: {
+    version: number;
     vaultFieldName: string;
     credentialSentinel: string;
   };
@@ -31,6 +32,10 @@ type ConformanceVectors = {
     aliasId: number;
     address: string;
     expectedCanonical: string;
+  }>;
+  rejectedReferenceVectors: Array<{
+    name: string;
+    encoded: string;
   }>;
 };
 
@@ -131,6 +136,8 @@ test("uses one canonical connection-scoped reference across the WASM boundary", 
   expect(encoded).toBe(referenceVector.expectedCanonical);
   expect(encoded).not.toContain(conformance.referenceSchema.credentialSentinel);
   const parsed = parse_alias_reference(encoded);
+  expect(parsed.version).toBe(1);
+  expect(conformance.referenceSchema.version).toBe(1);
   expect(parsed.connectionId).toBe(CONNECTION_ONE);
   expect(parsed.aliasId).toBe(BigInt(referenceVector.aliasId));
   expect(serialize_alias_reference(parsed)).toBe(encoded);
@@ -142,6 +149,14 @@ test("uses one canonical connection-scoped reference across the WASM boundary", 
   ]);
   expect(bind_alias_reference(encoded, bound.cipher).changed).toBe(false);
 });
+
+test.each(conformance.rejectedReferenceVectors)(
+  "rejects non-v1 reference vector $name",
+  ({ encoded }) => {
+    expect(() => parse_alias_reference(encoded)).toThrow();
+    expect(() => bind_alias_reference(encoded, cipher(90, "first@example.test"))).toThrow();
+  },
+);
 
 test("isolates overlapping provider IDs for two accounts on one origin", () => {
   const firstAlias = alias(7, "first@example.test");

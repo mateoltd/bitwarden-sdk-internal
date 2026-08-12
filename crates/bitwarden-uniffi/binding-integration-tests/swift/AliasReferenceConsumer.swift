@@ -11,14 +11,21 @@ struct AliasReferenceConsumer {
         let providerAlias = alias(id: 7, address: "first@example.test")
         let encoded = try createAliasReference(identity: firstIdentity, alias: providerAlias)
         let expected =
-            "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"\(instance)\"," +
+            "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"\(instance)\"," +
             "\"connectionId\":\"\(connectionOne)\",\"aliasId\":7,\"address\":\"first@example.test\"}"
         precondition(encoded == expected)
 
         let parsed = try parseAliasReference(value: encoded)
-        precondition(parsed.version == 2 && parsed.connectionId == connectionOne && parsed.aliasId == 7)
+        precondition(parsed.version == 1 && parsed.connectionId == connectionOne && parsed.aliasId == 7)
         let reserialized = try serializeAliasReference(reference: parsed)
         precondition(reserialized == encoded)
+
+        for rejected in rejectedReferences(from: expected) {
+            do {
+                _ = try parseAliasReference(value: rejected)
+                preconditionFailure("non-v1 alias reference unexpectedly parsed")
+            } catch {}
+        }
 
         let bound = try bindAliasReference(
             value: encoded,
@@ -49,6 +56,19 @@ struct AliasReferenceConsumer {
         precondition(repeated.summary.matched == 1 && repeated.actions.isEmpty)
 
         print("Swift alias reference consumer passed")
+    }
+
+    private static func rejectedReferences(from canonical: String) -> [String] {
+        [
+            canonical.replacingOccurrences(of: "\"version\":1,", with: ""),
+            canonical.replacingOccurrences(of: "\"version\":1", with: "\"version\":0"),
+            "{\"version\":",
+            canonical.replacingOccurrences(of: "\"version\":1", with: "\"version\":2"),
+            canonical.replacingOccurrences(
+                of: "\"version\":1",
+                with: "\"version\":4294967295"
+            ),
+        ]
     }
 
     private static func identity(_ connectionId: String) -> AliasProviderIdentity {

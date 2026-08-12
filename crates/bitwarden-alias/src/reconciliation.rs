@@ -14,8 +14,8 @@ use uuid::{Uuid, Variant, Version};
 
 use crate::{Alias, AliasId, is_safe_email_address};
 
-/// Current schema version stored in vault alias-reference fields.
-pub const ALIAS_REFERENCE_VERSION: u32 = 2;
+/// First public schema version stored in vault alias-reference fields.
+pub const ALIAS_REFERENCE_VERSION: u32 = 1;
 
 /// Reserved hidden-field name used to persist alias identity inside an encrypted vault cipher.
 pub const ALIAS_REFERENCE_FIELD_NAME: &str = "bitwarden.alias.reference";
@@ -476,7 +476,8 @@ pub struct AliasReconciliationSummary {
     pub proposed_repairs: u64,
 }
 
-/// Immutable dry-run output. No cipher changes occur until [`apply_alias_reconciliation`] is called.
+/// Immutable dry-run output. No cipher changes occur until [`apply_alias_reconciliation`] is
+/// called.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[cfg_attr(
     feature = "wasm",
@@ -1215,7 +1216,7 @@ mod tests {
         assert_eq!(
             encoded.expose(),
             &format!(
-                "{{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"private-alias@example.test\"}}"
+                "{{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"private-alias@example.test\"}}"
             )
         );
         assert!(!format!("{reference:?}").contains("private-alias"));
@@ -1225,7 +1226,7 @@ mod tests {
         );
 
         let oversized = format!(
-            "{{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"{}\"}}",
+            "{{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"{}\"}}",
             "a".repeat(MAX_ALIAS_REFERENCE_BYTES)
         );
         assert!(matches!(
@@ -1266,6 +1267,43 @@ mod tests {
         assert!(matches!(
             unsafe_address.encode(),
             Err(AliasReferenceError::InvalidValue(_))
+        ));
+    }
+
+    #[test]
+    fn non_v1_reference_versions_fail_closed() {
+        let provider = provider();
+        let provider_alias = alias(41, "private-alias@example.test".to_owned());
+        let canonical = AliasReference::new(&provider, &provider_alias)
+            .expect("reference should construct")
+            .encode()
+            .expect("reference should encode")
+            .expose_owned();
+        let value: serde_json::Value =
+            serde_json::from_str(&canonical).expect("canonical reference should be JSON");
+
+        let mut missing = value.clone();
+        missing
+            .as_object_mut()
+            .expect("reference should be an object")
+            .remove("version");
+        assert!(matches!(
+            AliasReference::decode(&missing.to_string()),
+            Err(AliasReferenceError::Malformed)
+        ));
+
+        for version in [0, 2, u32::MAX] {
+            let mut rejected = value.clone();
+            rejected["version"] = serde_json::json!(version);
+            assert!(matches!(
+                AliasReference::decode(&rejected.to_string()),
+                Err(AliasReferenceError::UnsupportedVersion { version: found }) if found == version
+            ));
+        }
+
+        assert!(matches!(
+            AliasReference::decode("{\"version\":"),
+            Err(AliasReferenceError::Malformed)
         ));
     }
 
@@ -1581,7 +1619,7 @@ mod tests {
         attach_raw_reference(
             &mut hostile,
             format!(
-                "{{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":18,\"address\":\"eighteen@example.test\",\"apiToken\":\"{hostile_secret}\"}}"
+                "{{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":18,\"address\":\"eighteen@example.test\",\"apiToken\":\"{hostile_secret}\"}}"
             ),
             FieldType::Hidden,
         );

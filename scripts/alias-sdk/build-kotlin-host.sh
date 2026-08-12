@@ -9,6 +9,7 @@ output_directory="${1:-}"
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")"
+alias_reference_schema_version="$(tr -d '[:space:]' <"$repository_root/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"
 "$repository_root/scripts/alias-sdk/check-host.sh" kotlin
 [[ -z "$(git -C "$repository_root" status --porcelain --untracked-files=normal)" ]] || {
     echo "Kotlin host artifact gate failed: release artifacts require a clean worktree" >&2
@@ -117,6 +118,8 @@ cp "$jar_path" "$output_directory/"
 cp "$native_path" "$output_directory/"
 git -C "$repository_root" rev-parse HEAD >"$output_directory/VERSION"
 printf '%s\n' "$release_version" >"$output_directory/PACKAGE_VERSION"
+printf '%s\n' "$alias_reference_schema_version" \
+    >"$output_directory/ALIAS_REFERENCE_SCHEMA_VERSION"
 "$repository_root/scripts/check-oss-artifact-boundary.sh" \
     --kotlin-host "$output_directory/$jar_name"
 

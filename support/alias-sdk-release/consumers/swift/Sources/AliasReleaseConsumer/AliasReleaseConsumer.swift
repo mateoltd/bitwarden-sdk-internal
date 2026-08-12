@@ -29,8 +29,39 @@ public enum AliasReleaseConsumer {
         )
 
         let encoded = try createAliasReference(identity: identity, alias: providerAlias)
+        let expected =
+            "{\"version\":1,\"provider\":\"simplelogin\"," +
+            "\"providerInstance\":\"https://aliases.example.test/\"," +
+            "\"connectionId\":\"\(connectionId)\",\"aliasId\":7," +
+            "\"address\":\"alias@example.test\"}"
         let parsed = try parseAliasReference(value: encoded)
         let serialized = try serializeAliasReference(reference: parsed)
-        return parsed.connectionId == connectionId && serialized == encoded
+        guard encoded == expected,
+              parsed.version == 1,
+              parsed.connectionId == connectionId,
+              serialized == encoded
+        else {
+            return false
+        }
+        for rejected in rejectedReferences(from: encoded) {
+            do {
+                _ = try parseAliasReference(value: rejected)
+                return false
+            } catch {}
+        }
+        return true
+    }
+
+    private static func rejectedReferences(from canonical: String) -> [String] {
+        [
+            canonical.replacingOccurrences(of: "\"version\":1,", with: ""),
+            canonical.replacingOccurrences(of: "\"version\":1", with: "\"version\":0"),
+            "{\"version\":",
+            canonical.replacingOccurrences(of: "\"version\":1", with: "\"version\":2"),
+            canonical.replacingOccurrences(
+                of: "\"version\":1",
+                with: "\"version\":4294967295"
+            ),
+        ]
     }
 }

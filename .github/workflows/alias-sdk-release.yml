@@ -373,6 +373,8 @@ jobs:
             "$RUNNER_TEMP/alias-sdk-android/bitwarden-alias-sdk-android-${release_version}.aar"
           git rev-parse HEAD >"$RUNNER_TEMP/alias-sdk-android/VERSION"
           printf '%s\n' "$release_version" >"$RUNNER_TEMP/alias-sdk-android/PACKAGE_VERSION"
+          cp support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION \
+            "$RUNNER_TEMP/alias-sdk-android/ALIAS_REFERENCE_SCHEMA_VERSION"
           {
             echo "source_commit=$(git rev-parse HEAD)"
             echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
@@ -441,6 +443,9 @@ jobs:
         env:
           CLIENTS_CONTRACT_FILE: ${{ github.workspace }}/support/alias-sdk-release/consumers/typescript/bitwarden-clients-contract.json
           CLIENT_INTEGRATION_FILE: ${{ github.workspace }}/support/alias-sdk-release/client-integration.json
+          CONFORMANCE_VECTORS_FILE: ${{ github.workspace }}/formal/alias-security/conformance-vectors.json
+          ALIAS_REFERENCE_SCHEMA_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION
+          INTEGRATION_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/INTEGRATION_BASE
           PROVIDER_PIN_FILE: ${{ github.workspace }}/support/simplelogin/SIMPLELOGIN_COMMIT
           RELEASE_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/VERSION
           SOURCE_COMMIT: ${{ github.sha }}
@@ -474,6 +479,7 @@ jobs:
             echo
             echo "- Source commit: \`$(git rev-parse HEAD)\`"
             echo "- Package version: \`$(scripts/alias-sdk/read-release-version.sh)\`"
+            echo "- Alias reference schema: \`1\`"
             echo "- Workflow artifact ID: \`$ARTIFACT_ID\`"
             echo "- Workflow artifact SHA-256: \`$ARTIFACT_DIGEST\`"
             echo "- Registry publication: disabled"

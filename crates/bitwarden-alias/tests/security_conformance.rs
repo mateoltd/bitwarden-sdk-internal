@@ -13,8 +13,9 @@ use std::{
 
 use bitwarden_alias::{
     ALIAS_REFERENCE_FIELD_NAME, ALIAS_REFERENCE_VERSION, Alias, AliasClient, AliasClientSettings,
-    AliasError, AliasId, AliasProviderIdentity, MailboxId, MailboxRef, apply_alias_reconciliation,
-    create_alias_reference, parse_alias_reference, plan_alias_reconciliation,
+    AliasError, AliasId, AliasProviderIdentity, AliasReferenceError, MailboxId, MailboxRef,
+    apply_alias_reconciliation, create_alias_reference, parse_alias_reference,
+    plan_alias_reconciliation,
 };
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_vault::{
@@ -37,6 +38,7 @@ struct Vectors {
     reference_schema: ReferenceSchema,
     identities: Identities,
     reference_vectors: Vec<ReferenceVector>,
+    rejected_reference_vectors: Vec<RejectedReferenceVector>,
     reconciliation_vectors: Vec<ReconciliationVector>,
     lifecycle_traces: Vec<LifecycleTrace>,
     operation_semantics: OperationSemantics,
@@ -75,6 +77,14 @@ struct ReferenceVector {
     alias_id: u64,
     address: String,
     expected_canonical: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RejectedReferenceVector {
+    name: String,
+    classification: String,
+    encoded: String,
 }
 
 #[derive(Deserialize)]
@@ -300,8 +310,8 @@ fn alias_json(id: u64, enabled: bool) -> Value {
 #[test]
 fn production_reference_schema_refines_the_formal_contract() {
     let vectors = vectors();
-    assert_eq!(vectors.contract_version, 2);
-    assert_eq!(vectors.model_revision, "alias-security-v2-current-only");
+    assert_eq!(vectors.contract_version, 1);
+    assert_eq!(vectors.model_revision, "alias-security-v1-current-only");
     assert_eq!(
         vectors.model_files,
         [
@@ -357,12 +367,13 @@ fn production_reference_schema_refines_the_formal_contract() {
         assert_eq!(parsed.encode().expect("reference must re-encode"), encoded);
 
         let value: Value = serde_json::from_str(encoded.expose()).expect("canonical JSON");
-        let keys: Vec<_> = value
+        let mut keys: Vec<_> = value
             .as_object()
             .expect("reference must be an object")
             .keys()
             .cloned()
             .collect();
+        keys.sort();
         let mut expected_keys = vectors.reference_schema.ordered_fields.clone();
         expected_keys.sort();
         assert_eq!(keys, expected_keys, "{}", vector.name);
@@ -384,6 +395,29 @@ fn production_reference_schema_refines_the_formal_contract() {
     let error = parse_alias_reference(&hostile).expect_err("credential field must be rejected");
     let rendered = format!("{error:?} {error}");
     assert!(!rendered.contains(&vectors.reference_schema.credential_sentinel));
+
+    for rejected in &vectors.rejected_reference_vectors {
+        let error = parse_alias_reference(&rejected.encoded)
+            .expect_err("non-v1 conformance vector must fail closed");
+        match rejected.classification.as_str() {
+            "malformed" => assert!(
+                matches!(&error, AliasReferenceError::Malformed),
+                "{}",
+                rejected.name
+            ),
+            "unsupportedVersion" => assert!(
+                matches!(&error, AliasReferenceError::UnsupportedVersion { .. }),
+                "{}",
+                rejected.name
+            ),
+            classification => panic!(
+                "unknown rejected reference classification {classification} for {}",
+                rejected.name
+            ),
+        }
+        let rendered = format!("{error:?} {error}");
+        assert!(!rendered.contains(&rejected.encoded), "{}", rejected.name);
+    }
 }
 
 #[test]

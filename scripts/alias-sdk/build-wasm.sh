@@ -17,6 +17,7 @@ for command_name in node npm wasm-opt wasm2js; do
 done
 
 release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")"
+alias_reference_schema_version="$(tr -d '[:space:]' <"$repository_root/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"
 package_version="$(node -p \
     "require('$repository_root/crates/bitwarden-wasm-internal/npm/package.json').version")"
 [[ "$package_version" == "$release_version" ]] || {
@@ -34,5 +35,7 @@ output_directory="$(mkdir -p "$output_directory" && cd "$output_directory" && pw
 )
 cp "$repository_root/crates/bitwarden-wasm-internal/npm/VERSION" "$output_directory/VERSION"
 printf '%s\n' "$release_version" >"$output_directory/PACKAGE_VERSION"
+printf '%s\n' "$alias_reference_schema_version" \
+    >"$output_directory/ALIAS_REFERENCE_SCHEMA_VERSION"
 
 echo "WASM alias SDK artifact built at $output_directory"

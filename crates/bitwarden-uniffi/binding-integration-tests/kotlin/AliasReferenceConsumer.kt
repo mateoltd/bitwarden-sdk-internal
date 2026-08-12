@@ -26,13 +26,16 @@ fun main() {
     val providerAlias = alias(7uL, "first@example.test")
     val encoded = createAliasReference(firstIdentity, providerAlias)
     val expected =
-        "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"$INSTANCE\"," +
+        "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"$INSTANCE\"," +
             "\"connectionId\":\"$CONNECTION_ONE\",\"aliasId\":7,\"address\":\"first@example.test\"}"
     check(encoded == expected)
 
     val parsed = parseAliasReference(encoded)
-    check(parsed.version == 2u && parsed.connectionId == CONNECTION_ONE && parsed.aliasId == 7uL)
+    check(parsed.version == 1u && parsed.connectionId == CONNECTION_ONE && parsed.aliasId == 7uL)
     check(serializeAliasReference(parsed) == encoded)
+    rejectedReferences(expected).forEach { rejected ->
+        check(runCatching { parseAliasReference(rejected) }.isFailure)
+    }
 
     val bound = bindAliasReference(encoded, cipher(1, "first@example.test"))
     check(bound.changed)
@@ -58,6 +61,14 @@ fun main() {
 
     println("Kotlin alias reference consumer passed")
 }
+
+private fun rejectedReferences(canonical: String) = listOf(
+    canonical.replace("\"version\":1,", ""),
+    canonical.replace("\"version\":1", "\"version\":0"),
+    "{\"version\":",
+    canonical.replace("\"version\":1", "\"version\":2"),
+    canonical.replace("\"version\":1", "\"version\":4294967295"),
+)
 
 private fun identity(connectionId: String) = AliasProviderIdentity(
     provider = AliasProvider.SIMPLE_LOGIN,

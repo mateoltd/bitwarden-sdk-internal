@@ -1,7 +1,8 @@
 //! Live reconciliation contract test for a disposable SimpleLogin checkout.
 //!
 //! Run with:
-//! `SIMPLELOGIN_API_URL=... SIMPLELOGIN_API_TOKEN=... cargo test -p bitwarden-alias --test reconciliation_live -- --ignored`
+//! `SIMPLELOGIN_API_URL=... SIMPLELOGIN_API_TOKEN=... cargo test -p bitwarden-alias --test
+//! reconciliation_live -- --ignored`
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -63,6 +64,7 @@ async fn reconciles_real_simplelogin_with_real_vault_models() {
     let stored = AliasReference::from_cipher(&ciphers[0])
         .expect("stored live reference should be valid")
         .expect("stored live reference should exist");
+    assert_eq!(stored.version, 1);
     assert_eq!(stored.alias_id, alias_id);
     assert_eq!(stored.provider_identity(), provider);
 

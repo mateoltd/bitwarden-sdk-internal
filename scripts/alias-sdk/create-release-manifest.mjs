@@ -31,6 +31,10 @@ const upstreamBase = requireFullCommit(
   readTrimmed(requireFile("UPSTREAM_BASE_FILE")),
   "UPSTREAM_BASE_FILE",
 );
+const integrationBase = requireFullCommit(
+  readTrimmed(requireFile("INTEGRATION_BASE_FILE")),
+  "INTEGRATION_BASE_FILE",
+);
 const providerCommit = requireFullCommit(
   readTrimmed(requireFile("PROVIDER_PIN_FILE")),
   "PROVIDER_PIN_FILE",
@@ -38,6 +42,13 @@ const providerCommit = requireFullCommit(
 const releaseVersion = readTrimmed(requireFile("RELEASE_VERSION_FILE"));
 if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
   throw new Error(`RELEASE_VERSION_FILE is not valid SemVer: ${releaseVersion}`);
+}
+const aliasReferenceSchemaVersionText = readTrimmed(
+  requireFile("ALIAS_REFERENCE_SCHEMA_VERSION_FILE"),
+);
+const aliasReferenceSchemaVersion = Number(aliasReferenceSchemaVersionText);
+if (aliasReferenceSchemaVersionText !== "1" || aliasReferenceSchemaVersion !== 1) {
+  throw new Error("ALIAS_REFERENCE_SCHEMA_VERSION_FILE must identify schema version 1");
 }
 
 const typescriptPackage = readJson(requireFile("TYPESCRIPT_PACKAGE_FILE"));
@@ -49,14 +60,22 @@ if (typescriptPackage.version !== releaseVersion) {
     `TypeScript package version ${typescriptPackage.version} does not match ${releaseVersion}`,
   );
 }
+if (typescriptPackage.aliasReferenceSchemaVersion !== aliasReferenceSchemaVersion) {
+  throw new Error("The TypeScript package has the wrong alias reference schema version");
+}
 
 const integration = readJson(requireFile("CLIENT_INTEGRATION_FILE"));
+const conformance = readJson(requireFile("CONFORMANCE_VECTORS_FILE"));
 if (
   integration.schemaVersion !== 1 ||
+  integration.aliasReferenceSchemaVersion !== aliasReferenceSchemaVersion ||
   !Array.isArray(integration.requiredClientIntegrationSteps) ||
   integration.requiredClientIntegrationSteps.length === 0
 ) {
   throw new Error("CLIENT_INTEGRATION_FILE has an unsupported or empty schema");
+}
+if (conformance.referenceSchema?.version !== integration.aliasReferenceSchemaVersion) {
+  throw new Error("Release metadata and conformance vectors disagree on the alias schema");
 }
 
 const walk = (directory) =>
@@ -81,14 +100,24 @@ const artifactByPath = new Map(artifacts.map((artifact) => [artifact.path, artif
 const assertPackageProvenance = (directory) => {
   const sourcePath = `${directory}/VERSION`;
   const versionPath = `${directory}/PACKAGE_VERSION`;
-  if (!artifactByPath.has(sourcePath) || !artifactByPath.has(versionPath)) {
-    throw new Error(`${directory} is missing source or package version provenance`);
+  const schemaPath = `${directory}/ALIAS_REFERENCE_SCHEMA_VERSION`;
+  if (
+    !artifactByPath.has(sourcePath) ||
+    !artifactByPath.has(versionPath) ||
+    !artifactByPath.has(schemaPath)
+  ) {
+    throw new Error(`${directory} is missing source, package, or schema provenance`);
   }
   if (readTrimmed(path.join(artifactDirectory, sourcePath)) !== sourceCommit) {
     throw new Error(`${sourcePath} does not match SOURCE_COMMIT`);
   }
   if (readTrimmed(path.join(artifactDirectory, versionPath)) !== releaseVersion) {
     throw new Error(`${versionPath} does not match RELEASE_VERSION_FILE`);
+  }
+  if (
+    readTrimmed(path.join(artifactDirectory, schemaPath)) !== String(aliasReferenceSchemaVersion)
+  ) {
+    throw new Error(`${schemaPath} does not match ALIAS_REFERENCE_SCHEMA_VERSION_FILE`);
   }
 };
 
@@ -144,6 +173,7 @@ const packages = Object.fromEntries(
     const packageRecord = {
       name,
       version: releaseVersion,
+      aliasReferenceSchemaVersion,
       format,
       artifact: matchingArtifacts[0],
     };
@@ -164,8 +194,10 @@ const packages = Object.fromEntries(
 
 const manifest = {
   schemaVersion: 2,
+  aliasReferenceSchemaVersion,
   sourceCommit,
   releaseVersion,
+  integrationBase,
   upstreamBase,
   providerPin: {
     provider: "SimpleLogin",

@@ -408,6 +408,7 @@ mod security_conformance {
         let encoded_value = encoded.expose().to_owned();
         let parsed = parse_alias_reference(SensitiveString::from(encoded_value))
             .expect("UniFFI wrapper must parse");
+        assert_eq!(parsed.version, 1);
         assert_eq!(parsed.provider_identity(), primary);
         assert_eq!(
             serialize_alias_reference(parsed)
@@ -415,5 +416,19 @@ mod security_conformance {
                 .expose(),
             encoded.expose()
         );
+
+        for rejected in vectors["rejectedReferenceVectors"]
+            .as_array()
+            .expect("rejected reference vectors")
+        {
+            let encoded = rejected["encoded"]
+                .as_str()
+                .expect("rejected reference payload");
+            assert!(
+                parse_alias_reference(SensitiveString::from(encoded)).is_err(),
+                "{}",
+                rejected["name"].as_str().expect("rejected vector name")
+            );
+        }
     }
 }

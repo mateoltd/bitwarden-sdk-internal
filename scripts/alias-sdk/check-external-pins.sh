@@ -2,10 +2,21 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+integration_base="$(tr -d '[:space:]' \
+    <"$repository_root/support/alias-sdk-release/INTEGRATION_BASE")"
+[[ "$integration_base" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "Alias SDK integration base is not a full commit ID" >&2
+    exit 1
+}
 fail() {
     echo "Alias SDK external-source pin gate failed: $*" >&2
     exit 1
 }
+git -C "$repository_root" cat-file -e "$integration_base^{commit}" 2>/dev/null \
+    || fail "INTEGRATION_BASE is not present in repository history"
+git -C "$repository_root" merge-base --is-ancestor "$integration_base" HEAD \
+    || fail "INTEGRATION_BASE is not an ancestor of the candidate"
 
 simplelogin_commit="$(tr -d '[:space:]' <"$repository_root/support/simplelogin/SIMPLELOGIN_COMMIT")"
 [[ "$simplelogin_commit" =~ ^[0-9a-f]{40}$ ]] \
@@ -47,19 +58,30 @@ node -e '
 
 release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")" \
     || fail "the alias SDK release version is invalid"
+alias_reference_schema_version="$(tr -d '[:space:]' \
+    <"$repository_root/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"
+[[ "$alias_reference_schema_version" == "1" ]] \
+    || fail "the alias reference schema version must be 1"
 node -e '
   const fs = require("node:fs");
   const releaseVersion = process.argv[1];
   const packageManifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const integration = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+  const conformance = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+  const aliasReferenceSchemaVersion = Number.parseInt(process.argv[5], 10);
   if (packageManifest.name !== "@bitwarden/sdk-internal") process.exit(1);
   if (packageManifest.version !== releaseVersion) process.exit(1);
+  if (packageManifest.aliasReferenceSchemaVersion !== aliasReferenceSchemaVersion) process.exit(1);
   if (integration.schemaVersion !== 1) process.exit(1);
+  if (integration.aliasReferenceSchemaVersion !== aliasReferenceSchemaVersion) process.exit(1);
+  if (conformance.referenceSchema?.version !== integration.aliasReferenceSchemaVersion) process.exit(1);
   if (!Array.isArray(integration.requiredClientIntegrationSteps)) process.exit(1);
   if (integration.requiredClientIntegrationSteps.length === 0) process.exit(1);
 ' "$release_version" \
     "$repository_root/crates/bitwarden-wasm-internal/npm/package.json" \
     "$repository_root/support/alias-sdk-release/client-integration.json" \
+    "$repository_root/formal/alias-security/conformance-vectors.json" \
+    "$alias_reference_schema_version" \
     || fail "release version, TypeScript package, and client handoff metadata must agree"
 
 typescript_fixture="$repository_root/support/alias-sdk-release/consumers/typescript"

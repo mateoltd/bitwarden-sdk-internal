@@ -4,6 +4,9 @@ This directory contains the normative alias [security contract](SECURITY-CONTRAC
 transition systems, the [proof inventory and gap matrix](PROOF-COVERAGE.md), and canonical
 cross-language conformance vectors.
 
+The canonical wire format is the six-field, connection-scoped version 1 schema. All non-version-1
+inputs fail closed; the model and vectors define no development-schema decoder or migration path.
+
 Run the consolidated machine-checked contract with:
 
 ```bash

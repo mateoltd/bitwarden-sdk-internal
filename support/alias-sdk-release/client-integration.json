@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "aliasReferenceSchemaVersion": 1,
   "requiredClientIntegrationSteps": [
     {
       "id": "verify-source-and-artifact",
@@ -29,7 +30,7 @@
     {
       "id": "current-reference-schema",
       "platforms": ["typescriptWasm", "swift", "kotlinJvm", "android"],
-      "instruction": "Persist only current-schema alias references created and parsed by the SDK; reject unsupported schemas and do not infer bindings from usernames or addresses."
+      "instruction": "Persist only alias reference schema version 1 values created and parsed by the SDK. Reject missing, zero, malformed, version 2, and unknown future versions; do not migrate them or infer bindings from usernames or addresses."
     },
     {
       "id": "provider-pin",

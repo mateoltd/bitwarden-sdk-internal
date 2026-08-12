@@ -2,6 +2,7 @@ package com.bitwarden.aliasconsumer
 
 import com.bitwarden.sdk.createAliasReference
 import com.bitwarden.sdk.parseAliasReference
+import com.bitwarden.sdk.serializeAliasReference
 import uniffi.bitwarden_alias.Alias
 import uniffi.bitwarden_alias.AliasProvider
 import uniffi.bitwarden_alias.AliasProviderIdentity
@@ -36,6 +37,26 @@ object AliasReleaseConsumer {
         )
 
         val encoded = createAliasReference(identity, providerAlias)
-        return parseAliasReference(encoded).connectionId == connectionId
+        val expected =
+            "{\"version\":1,\"provider\":\"simplelogin\"," +
+                "\"providerInstance\":\"https://aliases.example.test/\"," +
+                "\"connectionId\":\"$connectionId\",\"aliasId\":7," +
+                "\"address\":\"alias@example.test\"}"
+        val parsed = parseAliasReference(encoded)
+        return encoded == expected &&
+            parsed.version == 1u &&
+            parsed.connectionId == connectionId &&
+            serializeAliasReference(parsed) == encoded &&
+            rejectedReferences(encoded).all { rejected ->
+                runCatching { parseAliasReference(rejected) }.isFailure
+            }
     }
+
+    private fun rejectedReferences(canonical: String) = listOf(
+        canonical.replace("\"version\":1,", ""),
+        canonical.replace("\"version\":1", "\"version\":0"),
+        "{\"version\":",
+        canonical.replace("\"version\":1", "\"version\":2"),
+        canonical.replace("\"version\":1", "\"version\":4294967295"),
+    )
 }

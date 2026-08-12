@@ -21,11 +21,11 @@ persistence path are outside the proof boundary and are explicit assumptions bel
 - **AUTH-1 Scoped transitions.** A lifecycle or reconciliation transition MUST target the stable
   resource named by the active connection. A foreign provider, instance, connection, alias ID, or
   cipher reference MUST be rejected or skipped without mutation.
-- **REC-1 Deterministic reconciliation.** Planning MUST be non-mutating. Automatic refresh MAY
-  occur only for one unambiguous current reference. Ciphers without a current reference MUST
-  NOT be inferred from their username or address. Duplicate alias IDs, duplicate cipher IDs,
-  duplicate reserved fields, stale plans, and conflicting current claims MUST fail or produce no
-  repair. Apply MUST validate every action before its first mutation.
+- **REC-1 Deterministic reconciliation.** Planning MUST be non-mutating. Automatic refresh MAY occur
+  only for one unambiguous current reference. Ciphers without a current reference MUST NOT be
+  inferred from their username or address. Duplicate alias IDs, duplicate cipher IDs, duplicate
+  reserved fields, stale plans, and conflicting current claims MUST fail or produce no repair. Apply
+  MUST validate every action before its first mutation.
 - **REC-2 Idempotence and frame condition.** Reapplying a valid plan MUST be a no-op once its
   postcondition is satisfied. Reconciliation MAY change only the target login username and the one
   hidden alias-reference field. All other cipher fields and all unrelated ciphers MUST remain
@@ -41,15 +41,16 @@ persistence path are outside the proof boundary and are explicit assumptions bel
   Non-idempotent mutations with an unknown outcome MUST NOT be blindly retried. A successful state
   result denotes a state observed by a subsequent validated read; it does not promise that another
   authorized actor cannot mutate the provider immediately afterward.
-- **REF-1 Canonical reference schema.** Version 2 reference JSON MUST contain exactly, and in
+- **REF-1 Canonical reference schema.** Version 1 reference JSON MUST contain exactly, and in
   canonical serialization order: `version`, `provider`, `providerInstance`, `connectionId`,
   `aliasId`, and `address`. Unknown fields, non-canonical instances, non-v4 connection IDs, zero
   alias IDs, unsafe addresses, visible or linked reserved fields, and oversized payloads MUST fail
-  closed.
+  closed. A missing, zero, malformed, version 2, or unknown future version MUST fail closed. The SDK
+  MUST NOT decode, migrate, or provide a compatibility fallback for any non-version-1 reference.
 - **SECRET-1 Non-disclosure.** Reference serialization MUST NOT contain an API token, password,
   signed suffix, credential-derived connection ID, URL user information, query credential, or
-  fragment credential. Parse, reconciliation, display, and debug errors MUST NOT echo a
-  reference payload or provider-controlled credential material.
+  fragment credential. Parse, reconciliation, display, and debug errors MUST NOT echo a reference
+  payload or provider-controlled credential material.
 
 ## Safety and liveness
 

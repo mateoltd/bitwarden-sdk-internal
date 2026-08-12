@@ -37,7 +37,34 @@ const providerAlias: Alias = {
 
 const encoded = create_alias_reference(identity, providerAlias);
 const parsed = parse_alias_reference(encoded);
+const expected =
+  `{"version":1,"provider":"simplelogin",` +
+  `"providerInstance":"https://aliases.example.test/","connectionId":"${connectionId}",` +
+  `"aliasId":7,"address":"alias@example.test"}`;
 
-if (parsed.connectionId !== connectionId || serialize_alias_reference(parsed) !== encoded) {
+if (
+  encoded !== expected ||
+  parsed.version !== 1 ||
+  parsed.connectionId !== connectionId ||
+  serialize_alias_reference(parsed) !== encoded
+) {
   throw new Error("alias reference identity was not preserved");
+}
+
+const rejectedReferences = [
+  encoded.replace('"version":1,', ""),
+  encoded.replace('"version":1', '"version":0'),
+  '{"version":',
+  encoded.replace('"version":1', '"version":2'),
+  encoded.replace('"version":1', '"version":4294967295'),
+];
+for (const rejected of rejectedReferences) {
+  try {
+    parse_alias_reference(rejected);
+    throw new Error("non-v1 alias reference unexpectedly parsed");
+  } catch (error) {
+    if (error instanceof Error && error.message === "non-v1 alias reference unexpectedly parsed") {
+      throw error;
+    }
+  }
 }

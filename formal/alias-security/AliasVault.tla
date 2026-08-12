@@ -1,8 +1,8 @@
 ------------------------------ MODULE AliasVault ------------------------------
 EXTENDS Naturals, TLC
 
-CONSTANTS Connections, AliasIds, Ciphers, Payloads, NoRef, OtherAddress,
-          CredentialSource
+CONSTANTS Connections, AliasIds, Ciphers, Payloads, NoRef, MalformedVersion,
+          OtherAddress, CredentialSource
 
 Resources == Connections \X AliasIds
 Addresses == AliasIds \cup {OtherAddress}
@@ -10,7 +10,7 @@ Addresses == AliasIds \cup {OtherAddress}
 AliasAddress(resource) == resource[2]
 
 Reference(resource, address) ==
-    [version          |-> 2,
+    [version          |-> 1,
      provider         |-> "simplelogin",
      providerInstance |-> "canonical-instance",
      connectionId     |-> resource[1],
@@ -35,6 +35,9 @@ SerializationEvent(reference) ==
 
 ExpectedReferenceFields ==
     {"version", "provider", "providerInstance", "connectionId", "aliasId", "address"}
+
+ReferenceVersionInputs == {NoRef, MalformedVersion, 0, 1, 2, 3}
+ReferenceVersionAccepted(version) == version = 1
 
 VARIABLES scope, references, usernames, unrelated, initialUnrelated,
           providerEnabled, deleted, writeCount, writtenResource, writtenScope,
@@ -179,6 +182,11 @@ ProviderDisablePreservesVault ==
 
 CanonicalReferenceSchema ==
     \A event \in serializations : DOMAIN event.reference = ExpectedReferenceFields
+
+ReferenceVersionFailClosed ==
+    /\ ReferenceVersionAccepted(1)
+    /\ \A version \in ReferenceVersionInputs \ {1} :
+           ~ReferenceVersionAccepted(version)
 
 CredentialNonDisclosure ==
     \A event \in serializations : CredentialSource \notin event.sources
