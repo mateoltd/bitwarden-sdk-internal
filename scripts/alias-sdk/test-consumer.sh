@@ -54,7 +54,8 @@ case "$consumer" in
             echo "Kotlin consumer gate failed: host bundle contains no JAR" >&2
             exit 1
         }
-        "$repository_root/crates/bitwarden-uniffi/kotlin/gradlew" --no-daemon \
+        "$repository_root/scripts/alias-sdk/retry-command.sh" 3 20 \
+            "$repository_root/crates/bitwarden-uniffi/kotlin/gradlew" --no-daemon \
             --project-dir "$temporary_directory/consumer" \
             -PsdkJar="$jar_path" \
             -PsdkNativeDirectory="$artifact" \
@@ -63,7 +64,8 @@ case "$consumer" in
     android)
         mkdir -p "$temporary_directory/consumer/app/libs"
         cp "$artifact" "$temporary_directory/consumer/app/libs/bitwarden-alias-sdk.aar"
-        "$repository_root/crates/bitwarden-uniffi/kotlin/gradlew" --no-daemon \
+        "$repository_root/scripts/alias-sdk/retry-command.sh" 3 20 \
+            "$repository_root/crates/bitwarden-uniffi/kotlin/gradlew" --no-daemon \
             --project-dir "$temporary_directory/consumer" \
             :app:assembleDebug
         ;;

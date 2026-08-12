@@ -343,7 +343,8 @@ jobs:
           (
             cd crates/bitwarden-uniffi/kotlin
             ./build-schemas.sh
-            ./gradlew --no-daemon :sdk:assembleRelease
+            ../../../scripts/alias-sdk/retry-command.sh 3 20 \
+              ./gradlew --no-daemon :sdk:assembleRelease
           )
 
       - name: Verify and test packaged AAR
