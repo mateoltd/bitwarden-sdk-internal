@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPOSITORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FORBIDDEN_PACKAGES='^bitwarden-(commercial-vault|pam|sm) '
-FORBIDDEN_EXPORTS='CommercialPasswordManagerClient|CommercialVaultClient|PamClient|PAMClient'
+FORBIDDEN_EXPORTS='CommercialPasswordManagerClient|CommercialVaultClient|PamClient|PAMClient|SecretsManagerClient|bitwarden[_-](commercial|license|pam|sm)'
 
 fail() {
     echo "OSS artifact boundary check failed: $*" >&2
@@ -84,6 +84,7 @@ check_generated_exports() {
 check_wasm() {
     local path="$1"
     local expected_source_commit
+    local forbidden
     local packaged_source_commit
 
     [[ -f "$path/package.json" ]] || fail "$path/package.json is missing"
@@ -106,6 +107,14 @@ check_wasm() {
         || fail "$path/VERSION does not identify the source commit"
     check_paths "$path"
     check_generated_exports "$path"
+    forbidden="$(
+        find "$path" -type f \( -name '*.wasm' -o -name '*.js' \) \
+            -exec grep -aEil "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+    )"
+    if [[ -n "$forbidden" ]]; then
+        printf '%s\n' "$forbidden" >&2
+        fail "$path contains a commercial-only WASM symbol"
+    fi
 
     (
         cd "$path"
@@ -115,6 +124,7 @@ check_wasm() {
 
 check_swift() {
     local path="$1"
+    local forbidden
 
     [[ -f "$path/LICENSE_GPL.txt" ]] || fail "$path/LICENSE_GPL.txt is missing"
     [[ -d "$path/BitwardenFFI.xcframework" ]] \
@@ -125,6 +135,14 @@ check_swift() {
         || fail "$path/LICENSE_GPL.txt is not the GPL text"
     check_paths "$path/BitwardenFFI.xcframework"
     check_generated_exports "$path/Sources/BitwardenSdk"
+    forbidden="$(
+        find "$path/BitwardenFFI.xcframework" -type f \
+            -exec grep -aEil "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+    )"
+    if [[ -n "$forbidden" ]]; then
+        printf '%s\n' "$forbidden" >&2
+        fail "$path contains a commercial-only Swift symbol"
+    fi
 }
 
 check_kotlin() {

@@ -3,6 +3,9 @@
 This lab builds the upstream SimpleLogin application from the commit in
 `SIMPLELOGIN_COMMIT`, runs its migrations against PostgreSQL, enables its Redis
 dependency, and exercises the production Bitwarden username-forwarder path.
+The lab rewrites only the two `FROM` lines into a temporary Dockerfile so the
+Node and Ubuntu bases are selected by immutable linux/amd64 manifest digests.
+PostgreSQL, Redis, and Mailpit images are also digest-pinned in `compose.yml`.
 The upstream clone is created beside the checkout by default and is never
 committed to this repository.
 

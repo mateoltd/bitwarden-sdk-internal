@@ -5,7 +5,7 @@ x-simplelogin: &simplelogin
   platform: linux/amd64
   build:
     context: ${SIMPLELOGIN_APP_DIR:?set by lab.sh}
-    dockerfile: Dockerfile
+    dockerfile: ${SIMPLELOGIN_DOCKERFILE:?prepared by lab.sh}
   environment:
     URL: http://127.0.0.1:${SIMPLELOGIN_HTTP_PORT:-17777}
     EMAIL_DOMAIN: sl.lan
