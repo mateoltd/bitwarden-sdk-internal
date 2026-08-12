@@ -124,7 +124,7 @@ jobs:
             node --version
             npm --version
             rustc --version
-            wasm-opt --version
+            ./node_modules/.bin/wasm-opt --version
           } >"$RUNNER_TEMP/alias-sdk-typescript/BUILD-ENVIRONMENT.txt"
 
       - name: Upload TypeScript artifact
