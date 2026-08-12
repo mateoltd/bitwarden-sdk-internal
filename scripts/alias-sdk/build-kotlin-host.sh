@@ -97,6 +97,7 @@ fi
 
 gradle_wrapper="$repository_root/crates/bitwarden-uniffi/kotlin/gradlew"
 "$gradle_wrapper" --no-daemon \
+    --project-cache-dir "$temporary_directory/gradle-project-cache" \
     --project-dir "$repository_root/support/alias-sdk-release/kotlin-host-sdk" \
     -PgeneratedSources="$temporary_directory/generated" \
     -PlicenseFile="$repository_root/LICENSE_GPL.txt" \
