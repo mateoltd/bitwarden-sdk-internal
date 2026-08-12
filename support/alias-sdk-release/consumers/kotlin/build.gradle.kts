@@ -18,7 +18,10 @@ dependencies {
 
 application {
     mainClass = "consumer.AliasReleaseConsumerKt"
-    applicationDefaultJvmArgs = listOf("-Djava.library.path=$sdkNativeDirectory")
+    applicationDefaultJvmArgs = listOf(
+        "-Djava.library.path=$sdkNativeDirectory",
+        "-Djna.library.path=$sdkNativeDirectory",
+    )
 }
 
 kotlin {

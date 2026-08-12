@@ -30,7 +30,7 @@ public enum AliasReleaseConsumer {
 
         let encoded = try createAliasReference(identity: identity, alias: providerAlias)
         let parsed = try parseAliasReference(value: encoded)
-        return parsed.connectionId == connectionId
-            && (try serializeAliasReference(reference: parsed)) == encoded
+        let serialized = try serializeAliasReference(reference: parsed)
+        return parsed.connectionId == connectionId && serialized == encoded
     }
 }
