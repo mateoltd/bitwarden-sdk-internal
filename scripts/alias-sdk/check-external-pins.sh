@@ -45,6 +45,23 @@ node -e '
   if (!/^[0-9a-f]{40}$/.test(contract.commit)) process.exit(1);
 ' "$clients_contract" || fail "the bitwarden/clients contract must record one full commit SHA"
 
+release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")" \
+    || fail "the alias SDK release version is invalid"
+node -e '
+  const fs = require("node:fs");
+  const releaseVersion = process.argv[1];
+  const packageManifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  const integration = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+  if (packageManifest.name !== "@bitwarden/sdk-internal") process.exit(1);
+  if (packageManifest.version !== releaseVersion) process.exit(1);
+  if (integration.schemaVersion !== 1) process.exit(1);
+  if (!Array.isArray(integration.requiredClientIntegrationSteps)) process.exit(1);
+  if (integration.requiredClientIntegrationSteps.length === 0) process.exit(1);
+' "$release_version" \
+    "$repository_root/crates/bitwarden-wasm-internal/npm/package.json" \
+    "$repository_root/support/alias-sdk-release/client-integration.json" \
+    || fail "release version, TypeScript package, and client handoff metadata must agree"
+
 typescript_fixture="$repository_root/support/alias-sdk-release/consumers/typescript"
 node -e '
   const fs = require("node:fs");

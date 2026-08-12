@@ -1,16 +1,14 @@
 use bitwarden_alias::{
-    Alias, AliasCipherMigrationOutput, AliasCipherMutationResult, AliasClientSettings,
-    AliasCreationOptions, AliasDomain, AliasError, AliasFilter, AliasId, AliasPage,
-    AliasProviderIdentity, AliasRecommendation, AliasReconciliationApplyOutput,
-    AliasReconciliationError, AliasReconciliationPlan, AliasReference, AliasReferenceError,
-    AliasState, ContactId, ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest,
-    CustomDomain, CustomDomainId, DeleteAliasResult, DeleteContactResult, ListAliasesRequest,
-    Mailbox, MailboxId, ReverseAlias, ReverseAliasPage, SearchAliasesRequest,
+    Alias, AliasCipherMutationResult, AliasClientSettings, AliasCreationOptions, AliasDomain,
+    AliasError, AliasFilter, AliasId, AliasPage, AliasProviderIdentity, AliasRecommendation,
+    AliasReconciliationApplyOutput, AliasReconciliationError, AliasReconciliationPlan,
+    AliasReference, AliasReferenceError, AliasState, ContactId, ContactState,
+    CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
+    DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, MailboxId, ReverseAlias,
+    ReverseAliasPage, SearchAliasesRequest,
     apply_alias_reconciliation_owned as core_apply_alias_reconciliation,
     bind_alias_reference as core_bind_alias_reference,
     create_alias_reference as core_create_alias_reference,
-    migrate_alias_reference as core_migrate_alias_reference,
-    migrate_cipher_alias_reference as core_migrate_cipher_alias_reference,
     parse_alias_reference as core_parse_alias_reference,
     plan_alias_reconciliation as core_plan_alias_reconciliation,
     serialize_alias_reference as core_serialize_alias_reference,
@@ -124,25 +122,6 @@ pub fn bind_alias_reference(
 ) -> Result<AliasCipherMutationResult, AliasReferenceError> {
     // EXPOSE: Binding parses decrypted vault metadata and returns it only in the decrypted cipher.
     core_bind_alias_reference(value.expose(), cipher)
-}
-
-/// Explicitly migrates a serialized legacy reference with caller-selected connections.
-#[uniffi::export]
-pub fn migrate_alias_reference(
-    value: SensitiveString,
-    connections: Vec<AliasProviderIdentity>,
-) -> Result<SensitiveString, AliasReferenceError> {
-    // EXPOSE: Migration parses decrypted vault metadata. Errors never render it.
-    core_migrate_alias_reference(value.expose(), &connections)
-}
-
-/// Explicitly migrates the reserved encrypted reference field on a decrypted cipher.
-#[uniffi::export]
-pub fn migrate_cipher_alias_reference(
-    cipher: CipherView,
-    connections: Vec<AliasProviderIdentity>,
-) -> Result<AliasCipherMigrationOutput, AliasReferenceError> {
-    core_migrate_cipher_alias_reference(cipher, &connections)
 }
 
 /// Computes a deterministic non-mutating reconciliation plan.
@@ -408,10 +387,9 @@ mod security_conformance {
     }
 
     #[test]
-    fn uniffi_exports_consume_the_canonical_reference_and_migration_vectors() {
+    fn uniffi_exports_consume_the_canonical_reference_vectors() {
         let vectors: Value = serde_json::from_str(VECTORS).expect("formal vectors must parse");
         let primary = identity(&vectors["identities"]["primary"]);
-        let second = identity(&vectors["identities"]["sameOriginSecondAccount"]);
         let reference = &vectors["referenceVectors"][0];
         let encoded = create_alias_reference(
             primary.clone(),
@@ -437,31 +415,5 @@ mod security_conformance {
                 .expose(),
             encoded.expose()
         );
-
-        let unique = vectors["migrationVectors"]
-            .as_array()
-            .expect("migration vectors")
-            .iter()
-            .find(|vector| vector["name"] == "legacy-unique-connection")
-            .expect("unique migration vector");
-        let legacy_value = unique["input"].as_str().expect("legacy input");
-        assert_eq!(
-            migrate_alias_reference(SensitiveString::from(legacy_value), vec![primary])
-                .expect("unique UniFFI migration must succeed")
-                .expose()
-                .as_str(),
-            unique["expectedCanonical"]
-                .as_str()
-                .expect("expected migration")
-        );
-        let error = migrate_alias_reference(
-            SensitiveString::from(legacy_value),
-            vec![identity(&vectors["identities"]["primary"]), second],
-        )
-        .expect_err("ambiguous UniFFI migration must fail");
-        assert!(matches!(
-            error,
-            AliasReferenceError::AmbiguousLegacyReference
-        ));
     }
 }

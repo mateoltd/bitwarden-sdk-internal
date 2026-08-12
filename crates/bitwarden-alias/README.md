@@ -38,18 +38,12 @@ the provider connection; it must never be derived from an API token, password,
 mailbox credential or any other secret. The address remains a last-known snapshot.
 The provider, instance, connection ID and provider alias ID are authoritative.
 
-Version 1 references lack a connection ID. Parsing and reconciliation reject them
-until the client calls the explicit migration operation with its available provider
-connections. Migration succeeds only when exactly one connection matches the
-legacy provider and instance. Multiple accounts on the same origin are rejected as
-ambiguous; after an explicit user selection the client can retry with that one
-connection. Migration is idempotent for version 2 references.
-
 `plan_alias_reconciliation` is a non-mutating dry run over complete provider
 alias data and decrypted `bitwarden_vault::CipherView` models. It reports exact
-matches, legacy address matches, duplicates, missing aliases, stale bindings,
-unbound aliases and references that were skipped for safety. Only
+matches, duplicates, missing aliases, stale current bindings, unbound aliases and
+references that were skipped for safety. Ciphers without a current reference are
+never inferred from their username or address. Only
 `apply_alias_reconciliation` mutates ciphers. It validates every action before
-the first edit and repeated application is idempotent. Bind, migrate and apply
+the first edit and repeated application is idempotent. Bind and apply
 return decrypted cipher models; consuming clients remain responsible for their
 normal encryption and persistence path.

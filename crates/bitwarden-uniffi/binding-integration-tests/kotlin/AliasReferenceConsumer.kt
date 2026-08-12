@@ -1,8 +1,6 @@
 import com.bitwarden.sdk.applyAliasReconciliation
 import com.bitwarden.sdk.bindAliasReference
 import com.bitwarden.sdk.createAliasReference
-import com.bitwarden.sdk.migrateAliasReference
-import com.bitwarden.sdk.migrateCipherAliasReference
 import com.bitwarden.sdk.parseAliasReference
 import com.bitwarden.sdk.planAliasReconciliation
 import com.bitwarden.sdk.serializeAliasReference
@@ -17,11 +15,9 @@ import java.time.Instant
 import uniffi.bitwarden_alias.Alias
 import uniffi.bitwarden_alias.AliasProvider
 import uniffi.bitwarden_alias.AliasProviderIdentity
-import uniffi.bitwarden_alias.AliasReferenceException
 import uniffi.bitwarden_alias.MailboxRef
 
 private const val CONNECTION_ONE = "11111111-1111-4111-8111-111111111111"
-private const val CONNECTION_TWO = "22222222-2222-4222-8222-222222222222"
 private const val INSTANCE = "https://aliases.example.test/"
 private const val REFERENCE_FIELD = "bitwarden.alias.reference"
 
@@ -48,40 +44,17 @@ fun main() {
     val plan = planAliasReconciliation(
         firstIdentity,
         listOf(providerAlias),
-        listOf(cipher(2, "first@example.test")),
+        listOf(bound.cipher),
     )
-    check(plan.summary.matchedByAddress == 1uL && plan.actions.size == 1)
+    check(plan.summary.matched == 1uL && plan.actions.isEmpty())
     val applied = applyAliasReconciliation(
         plan,
         listOf(providerAlias),
-        listOf(cipher(2, "first@example.test")),
+        listOf(bound.cipher),
     )
-    check(applied.result.changedCipherIds == listOf(cipherId(2)))
+    check(applied.result.changedCipherIds.isEmpty())
     val repeated = planAliasReconciliation(firstIdentity, listOf(providerAlias), applied.ciphers)
     check(repeated.summary.matched == 1uL && repeated.actions.isEmpty())
-
-    val legacy =
-        "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"$INSTANCE\"," +
-            "\"aliasId\":41,\"address\":\"legacy@example.test\"}"
-    try {
-        migrateAliasReference(legacy, listOf(firstIdentity, identity(CONNECTION_TWO)))
-        error("ambiguous legacy reference unexpectedly migrated")
-    } catch (_: AliasReferenceException.AmbiguousLegacyReference) {
-        // The client must select one connection explicitly.
-    }
-
-    val migrated = migrateAliasReference(legacy, listOf(firstIdentity))
-    check(parseAliasReference(migrated).connectionId == CONNECTION_ONE)
-    val migratedCipher = migrateCipherAliasReference(
-        cipher(
-            3,
-            "legacy@example.test",
-            listOf(FieldView(REFERENCE_FIELD, legacy, FieldType.HIDDEN, null)),
-        ),
-        listOf(firstIdentity),
-    )
-    check(migratedCipher.migration.changed)
-    check(migratedCipher.cipher.fields?.first()?.value == migrated)
 
     println("Kotlin alias reference consumer passed")
 }

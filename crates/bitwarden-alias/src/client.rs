@@ -61,7 +61,7 @@ pub struct AliasClientSettings {
     pub api_token: SensitiveString,
     /// Stable non-secret UUID v4 assigned to this provider account by the consuming client.
     ///
-    /// This is optional only for compatibility with legacy address-only generator operations.
+    /// This is optional for generator operations that do not create persisted vault references.
     /// Reference creation and reconciliation require it.
     #[serde(default)]
     pub connection_id: Option<String>,

@@ -1,5 +1,5 @@
 ------------------------------ MODULE AliasVault ------------------------------
-EXTENDS FiniteSets, Naturals, TLC
+EXTENDS Naturals, TLC
 
 CONSTANTS Connections, AliasIds, Ciphers, Payloads, NoRef, OtherAddress,
           CredentialSource
@@ -38,16 +38,12 @@ ExpectedReferenceFields ==
 
 VARIABLES scope, references, usernames, unrelated, initialUnrelated,
           providerEnabled, deleted, writeCount, writtenResource, writtenScope,
-          serializations, migrationVersion, migrationCandidates,
-          migrationInputConnection, migrationStatus, migratedConnection,
-          lastAction, lastResource, beforeVault, beforeDeleted
+          serializations, lastAction, lastResource, beforeVault, beforeDeleted
 
 variables ==
     <<scope, references, usernames, unrelated, initialUnrelated,
       providerEnabled, deleted, writeCount, writtenResource, writtenScope,
-      serializations, migrationVersion, migrationCandidates,
-      migrationInputConnection, migrationStatus, migratedConnection,
-      lastAction, lastResource, beforeVault, beforeDeleted>>
+      serializations, lastAction, lastResource, beforeVault, beforeDeleted>>
 
 Vault ==
     [references |-> references, usernames |-> usernames, unrelated |-> unrelated]
@@ -68,21 +64,15 @@ Init ==
     /\ writtenResource = [cipher \in Ciphers |-> NoRef]
     /\ writtenScope = [cipher \in Ciphers |-> NoRef]
     /\ serializations = InitialSerializations(references)
-    /\ migrationVersion \in {1, 2}
-    /\ migrationCandidates \in SUBSET Connections
-    /\ migrationInputConnection \in Connections
-    /\ migrationStatus = "pending"
-    /\ migratedConnection = NoRef
     /\ lastAction = "init"
     /\ lastResource = NoRef
     /\ beforeVault = Vault
     /\ beforeDeleted = deleted
 
 Claims(cipher, resource) ==
+    /\ references[cipher] # NoRef
     /\ resource[1] = scope
-    /\ IF references[cipher] = NoRef
-          THEN usernames[cipher] = AliasAddress(resource)
-          ELSE ReferenceResource(references[cipher]) = resource
+    /\ ReferenceResource(references[cipher]) = resource
 
 Claimers(resource) == {cipher \in Ciphers : Claims(cipher, resource)}
 
@@ -103,10 +93,7 @@ Reconcile(cipher, resource) ==
             {SerializationEvent(CanonicalReference(resource))}
     /\ lastAction' = "reconcile"
     /\ UNCHANGED <<scope, unrelated, initialUnrelated, providerEnabled, deleted,
-                    migrationVersion, migrationCandidates,
-                    migrationInputConnection, migrationStatus,
-                    migratedConnection, lastResource, beforeVault,
-                    beforeDeleted>>
+                    lastResource, beforeVault, beforeDeleted>>
 
 SwitchScope(connection) ==
     /\ connection # scope
@@ -114,10 +101,8 @@ SwitchScope(connection) ==
     /\ lastAction' = "scope"
     /\ UNCHANGED <<references, usernames, unrelated, initialUnrelated,
                     providerEnabled, deleted, writeCount, writtenResource,
-                    writtenScope, serializations, migrationVersion,
-                    migrationCandidates, migrationInputConnection,
-                    migrationStatus, migratedConnection, lastResource,
-                    beforeVault, beforeDeleted>>
+                    writtenScope, serializations, lastResource, beforeVault,
+                    beforeDeleted>>
 
 SetProviderEnabled(resource, value) ==
     /\ resource \in Resources \ deleted
@@ -129,9 +114,7 @@ SetProviderEnabled(resource, value) ==
     /\ lastResource' = resource
     /\ UNCHANGED <<scope, references, usernames, unrelated, initialUnrelated,
                     deleted, writeCount, writtenResource, writtenScope,
-                    serializations, migrationVersion, migrationCandidates,
-                    migrationInputConnection, migrationStatus,
-                    migratedConnection>>
+                    serializations>>
 
 DeleteProviderResource(resource) ==
     /\ resource \in Resources \ deleted
@@ -142,47 +125,7 @@ DeleteProviderResource(resource) ==
     /\ lastResource' = resource
     /\ UNCHANGED <<scope, references, usernames, unrelated, initialUnrelated,
                     providerEnabled, writeCount, writtenResource, writtenScope,
-                    serializations, migrationVersion, migrationCandidates,
-                    migrationInputConnection, migrationStatus,
-                    migratedConnection>>
-
-MigrateLegacyUnique ==
-    /\ migrationVersion = 1
-    /\ migrationStatus = "pending"
-    /\ Cardinality(migrationCandidates) = 1
-    /\ migrationStatus' = "migrated"
-    /\ migratedConnection' = CHOOSE connection \in migrationCandidates : TRUE
-    /\ lastAction' = "migrateLegacy"
-    /\ UNCHANGED <<scope, references, usernames, unrelated, initialUnrelated,
-                    providerEnabled, deleted, writeCount, writtenResource,
-                    writtenScope, serializations, migrationVersion,
-                    migrationCandidates, migrationInputConnection,
-                    lastResource, beforeVault, beforeDeleted>>
-
-RejectLegacyMigration ==
-    /\ migrationVersion = 1
-    /\ migrationStatus = "pending"
-    /\ Cardinality(migrationCandidates) # 1
-    /\ migrationStatus' = "rejected"
-    /\ migratedConnection' = NoRef
-    /\ lastAction' = "rejectLegacy"
-    /\ UNCHANGED <<scope, references, usernames, unrelated, initialUnrelated,
-                    providerEnabled, deleted, writeCount, writtenResource,
-                    writtenScope, serializations, migrationVersion,
-                    migrationCandidates, migrationInputConnection,
-                    lastResource, beforeVault, beforeDeleted>>
-
-MigrateCurrentReference ==
-    /\ migrationVersion = 2
-    /\ migrationStatus = "pending"
-    /\ migrationStatus' = "current"
-    /\ migratedConnection' = migrationInputConnection
-    /\ lastAction' = "migrateCurrent"
-    /\ UNCHANGED <<scope, references, usernames, unrelated, initialUnrelated,
-                    providerEnabled, deleted, writeCount, writtenResource,
-                    writtenScope, serializations, migrationVersion,
-                    migrationCandidates, migrationInputConnection,
-                    lastResource, beforeVault, beforeDeleted>>
+                    serializations>>
 
 Next ==
     \/ \E cipher \in Ciphers, resource \in Resources : Reconcile(cipher, resource)
@@ -190,9 +133,6 @@ Next ==
     \/ \E resource \in Resources, value \in BOOLEAN :
            SetProviderEnabled(resource, value)
     \/ \E resource \in Resources : DeleteProviderResource(resource)
-    \/ MigrateLegacyUnique
-    \/ RejectLegacyMigration
-    \/ MigrateCurrentReference
 
 Spec == Init /\ [][Next]_variables
 
@@ -207,11 +147,6 @@ TypeOK ==
     /\ writeCount \in [Ciphers -> 0..1]
     /\ writtenResource \in [Ciphers -> Resources \cup {NoRef}]
     /\ writtenScope \in [Ciphers -> Connections \cup {NoRef}]
-    /\ migrationVersion \in {1, 2}
-    /\ migrationCandidates \in SUBSET Connections
-    /\ migrationInputConnection \in Connections
-    /\ migrationStatus \in {"pending", "migrated", "rejected", "current"}
-    /\ migratedConnection \in Connections \cup {NoRef}
 
 StableResourceNamespace ==
     /\ \A resource \in Resources :
@@ -226,19 +161,6 @@ AuthorizedWrites ==
         writeCount[cipher] > 0 =>
             /\ writtenResource[cipher][1] = writtenScope[cipher]
             /\ writtenResource[cipher] \in Resources
-
-AmbiguousLegacyMigrationRejected ==
-    migrationVersion = 1 /\ Cardinality(migrationCandidates) # 1 =>
-        migrationStatus \in {"pending", "rejected"}
-
-UniqueLegacyMigrationAuthorized ==
-    migrationVersion = 1 /\ migrationStatus = "migrated" =>
-        /\ Cardinality(migrationCandidates) = 1
-        /\ migratedConnection \in migrationCandidates
-
-CurrentMigrationIdempotent ==
-    migrationVersion = 2 /\ migrationStatus = "current" =>
-        migratedConnection = migrationInputConnection
 
 ReconciliationIdempotent ==
     \A cipher \in Ciphers : writeCount[cipher] <= 1

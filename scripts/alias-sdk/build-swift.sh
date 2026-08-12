@@ -8,6 +8,7 @@ output_directory="${1:-}"
 }
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")"
 "$repository_root/scripts/alias-sdk/check-host.sh" swift
 [[ -z "$(git -C "$repository_root" status --porcelain --untracked-files=normal)" ]] || {
     echo "Swift artifact gate failed: release artifacts require a clean worktree" >&2
@@ -27,9 +28,12 @@ cp -R "$repository_root/crates/bitwarden-uniffi/swift/Sources" "$package_directo
 cp -R "$repository_root/crates/bitwarden-uniffi/swift/Tests" "$package_directory/"
 cp -R "$repository_root/crates/bitwarden-uniffi/swift/BitwardenFFI.xcframework" "$package_directory/"
 git -C "$repository_root" rev-parse HEAD >"$package_directory/VERSION"
+printf '%s\n' "$release_version" >"$package_directory/PACKAGE_VERSION"
 
-archive="$output_directory/bitwarden-alias-sdk-swift.tar.gz"
+archive="$output_directory/bitwarden-alias-sdk-swift-${release_version}.tar.gz"
 COPYFILE_DISABLE=1 tar -C "$package_directory" -czf "$archive" .
-"$repository_root/scripts/check-oss-artifact-boundary.sh" --swift "$package_directory"
+cp "$package_directory/VERSION" "$output_directory/VERSION"
+cp "$package_directory/PACKAGE_VERSION" "$output_directory/PACKAGE_VERSION"
+"$repository_root/scripts/check-oss-artifact-boundary.sh" --swift-release "$package_directory"
 
 echo "Swift alias SDK artifact built at $archive"

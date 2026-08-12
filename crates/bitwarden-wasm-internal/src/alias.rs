@@ -1,16 +1,14 @@
 use bitwarden_alias::{
-    Alias, AliasCipherMigrationOutput, AliasCipherMutationResult, AliasClientSettings,
-    AliasCreationOptions, AliasDomain, AliasError, AliasFilter, AliasId, AliasPage,
-    AliasProviderIdentity, AliasRecommendation, AliasReconciliationApplyOutput,
-    AliasReconciliationError, AliasReconciliationPlan, AliasReference, AliasReferenceError,
-    AliasState, ContactId, ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest,
-    CustomDomain, CustomDomainId, DeleteAliasResult, DeleteContactResult, ListAliasesRequest,
-    Mailbox, MailboxId, ReverseAlias, ReverseAliasPage, SearchAliasesRequest,
+    Alias, AliasCipherMutationResult, AliasClientSettings, AliasCreationOptions, AliasDomain,
+    AliasError, AliasFilter, AliasId, AliasPage, AliasProviderIdentity, AliasRecommendation,
+    AliasReconciliationApplyOutput, AliasReconciliationError, AliasReconciliationPlan,
+    AliasReference, AliasReferenceError, AliasState, ContactId, ContactState,
+    CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
+    DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, MailboxId, ReverseAlias,
+    ReverseAliasPage, SearchAliasesRequest,
     apply_alias_reconciliation_owned as core_apply_alias_reconciliation,
     bind_alias_reference as core_bind_alias_reference,
     create_alias_reference as core_create_alias_reference,
-    migrate_alias_reference as core_migrate_alias_reference,
-    migrate_cipher_alias_reference as core_migrate_cipher_alias_reference,
     parse_alias_reference as core_parse_alias_reference,
     plan_alias_reconciliation as core_plan_alias_reconciliation,
     serialize_alias_reference as core_serialize_alias_reference,
@@ -131,25 +129,6 @@ pub fn bind_alias_reference(
 ) -> Result<AliasCipherMutationResult, AliasReferenceError> {
     // EXPOSE: Binding parses decrypted vault metadata and returns it only in the decrypted cipher.
     core_bind_alias_reference(value.expose(), cipher)
-}
-
-/// Explicitly migrates a serialized legacy reference with caller-selected connections.
-#[wasm_bindgen]
-pub fn migrate_alias_reference(
-    value: SensitiveString,
-    connections: Vec<AliasProviderIdentity>,
-) -> Result<SensitiveString, AliasReferenceError> {
-    // EXPOSE: Migration parses decrypted vault metadata. Errors never render it.
-    core_migrate_alias_reference(value.expose(), &connections)
-}
-
-/// Explicitly migrates the reserved encrypted reference field on a decrypted cipher.
-#[wasm_bindgen]
-pub fn migrate_cipher_alias_reference(
-    cipher: CipherView,
-    connections: Vec<AliasProviderIdentity>,
-) -> Result<AliasCipherMigrationOutput, AliasReferenceError> {
-    core_migrate_cipher_alias_reference(cipher, &connections)
 }
 
 /// Computes a deterministic non-mutating reconciliation plan.

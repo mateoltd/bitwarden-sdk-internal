@@ -49,14 +49,16 @@ async fn reconciles_real_simplelogin_with_real_vault_models() {
         .expect("live client should have a connection identity");
     let cipher_id = CipherId::new_v4();
     let mut ciphers = vec![login_cipher(cipher_id, alias.email.expose().to_owned())];
+    client
+        .alias_reference(&alias)
+        .expect("live alias should produce a current reference")
+        .bind_to_cipher(&mut ciphers[0])
+        .expect("current reference should bind to the live cipher model");
 
     let dry_run = plan_alias_reconciliation(&provider, std::slice::from_ref(&alias), &ciphers)
         .expect("real provider data should reconcile");
-    assert_eq!(dry_run.summary.matched_by_address, 1);
-    assert_eq!(dry_run.summary.proposed_repairs, 1);
-    let applied = apply_alias_reconciliation(&dry_run, std::slice::from_ref(&alias), &mut ciphers)
-        .expect("explicit binding should succeed");
-    assert_eq!(applied.changed_cipher_ids, vec![cipher_id]);
+    assert_eq!(dry_run.summary.matched, 1);
+    assert_eq!(dry_run.summary.proposed_repairs, 0);
 
     let stored = AliasReference::from_cipher(&ciphers[0])
         .expect("stored live reference should be valid")

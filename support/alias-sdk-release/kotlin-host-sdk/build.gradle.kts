@@ -9,6 +9,7 @@ repositories {
 
 val generatedSources = providers.gradleProperty("generatedSources").get()
 val licenseFile = providers.gradleProperty("licenseFile").get()
+val releaseVersion = providers.gradleProperty("releaseVersion").get()
 
 sourceSets {
     main {
@@ -27,7 +28,7 @@ kotlin {
 
 tasks.jar {
     archiveBaseName = "bitwarden-alias-sdk-kotlin-host"
-    archiveVersion = ""
+    archiveVersion = releaseVersion
     from(licenseFile) {
         into("META-INF")
         rename { "LICENSE_GPL.txt" }

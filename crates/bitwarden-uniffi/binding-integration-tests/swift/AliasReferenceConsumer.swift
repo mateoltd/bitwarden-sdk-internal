@@ -3,7 +3,6 @@ import Foundation
 @main
 struct AliasReferenceConsumer {
     private static let connectionOne = "11111111-1111-4111-8111-111111111111"
-    private static let connectionTwo = "22222222-2222-4222-8222-222222222222"
     private static let instance = "https://aliases.example.test/"
     private static let referenceField = "bitwarden.alias.reference"
 
@@ -33,48 +32,21 @@ struct AliasReferenceConsumer {
         let plan = try planAliasReconciliation(
             provider: firstIdentity,
             aliases: [providerAlias],
-            ciphers: [cipher(id: 2, username: "first@example.test")]
+            ciphers: [bound.cipher]
         )
-        precondition(plan.summary.matchedByAddress == 1 && plan.actions.count == 1)
+        precondition(plan.summary.matched == 1 && plan.actions.isEmpty)
         let applied = try applyAliasReconciliation(
             plan: plan,
             aliases: [providerAlias],
-            ciphers: [cipher(id: 2, username: "first@example.test")]
+            ciphers: [bound.cipher]
         )
-        precondition(applied.result.changedCipherIds == [cipherId(2)])
+        precondition(applied.result.changedCipherIds.isEmpty)
         let repeated = try planAliasReconciliation(
             provider: firstIdentity,
             aliases: [providerAlias],
             ciphers: applied.ciphers
         )
         precondition(repeated.summary.matched == 1 && repeated.actions.isEmpty)
-
-        let legacy =
-            "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"\(instance)\"," +
-            "\"aliasId\":41,\"address\":\"legacy@example.test\"}"
-        do {
-            _ = try migrateAliasReference(
-                value: legacy,
-                connections: [firstIdentity, identity(connectionTwo)]
-            )
-            fatalError("ambiguous legacy reference unexpectedly migrated")
-        } catch AliasReferenceError.AmbiguousLegacyReference {
-            // The client must select one connection explicitly.
-        }
-
-        let migrated = try migrateAliasReference(value: legacy, connections: [firstIdentity])
-        let migratedReference = try parseAliasReference(value: migrated)
-        precondition(migratedReference.connectionId == connectionOne)
-        let migratedCipher = try migrateCipherAliasReference(
-            cipher: cipher(
-                id: 3,
-                username: "legacy@example.test",
-                fields: [FieldView(name: referenceField, value: legacy, type: .hidden, linkedId: nil)]
-            ),
-            connections: [firstIdentity]
-        )
-        precondition(migratedCipher.migration.changed)
-        precondition(migratedCipher.cipher.fields?.first?.value == migrated)
 
         print("Swift alias reference consumer passed")
     }

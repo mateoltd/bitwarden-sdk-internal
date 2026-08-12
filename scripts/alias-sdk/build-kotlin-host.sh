@@ -8,6 +8,7 @@ output_directory="${1:-}"
 }
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")"
 "$repository_root/scripts/alias-sdk/check-host.sh" kotlin
 [[ -z "$(git -C "$repository_root" status --porcelain --untracked-files=normal)" ]] || {
     echo "Kotlin host artifact gate failed: release artifacts require a clean worktree" >&2
@@ -102,9 +103,11 @@ gradle_wrapper="$repository_root/crates/bitwarden-uniffi/kotlin/gradlew"
     --project-dir "$repository_root/support/alias-sdk-release/kotlin-host-sdk" \
     -PgeneratedSources="$temporary_directory/generated" \
     -PlicenseFile="$repository_root/LICENSE_GPL.txt" \
+    -PreleaseVersion="$release_version" \
     clean jar
 
-jar_path="$repository_root/support/alias-sdk-release/kotlin-host-sdk/build/libs/bitwarden-alias-sdk-kotlin-host.jar"
+jar_name="bitwarden-alias-sdk-kotlin-host-${release_version}.jar"
+jar_path="$repository_root/support/alias-sdk-release/kotlin-host-sdk/build/libs/$jar_name"
 [[ -f "$jar_path" ]] || {
     echo "Kotlin host artifact gate failed: Gradle did not produce $jar_path" >&2
     exit 1
@@ -113,7 +116,8 @@ jar_path="$repository_root/support/alias-sdk-release/kotlin-host-sdk/build/libs/
 cp "$jar_path" "$output_directory/"
 cp "$native_path" "$output_directory/"
 git -C "$repository_root" rev-parse HEAD >"$output_directory/VERSION"
+printf '%s\n' "$release_version" >"$output_directory/PACKAGE_VERSION"
 "$repository_root/scripts/check-oss-artifact-boundary.sh" \
-    --kotlin-host "$output_directory/bitwarden-alias-sdk-kotlin-host.jar"
+    --kotlin-host "$output_directory/$jar_name"
 
 echo "Kotlin host alias SDK artifact built at $output_directory"

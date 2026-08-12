@@ -133,7 +133,7 @@ mod tests {
     use crate::username::UsernameError;
     #[cfg(not(feature = "alias"))]
     #[tokio::test]
-    async fn legacy_transport_without_alias_feature() {
+    async fn direct_transport_without_alias_feature() {
         use wiremock::{Mock, ResponseTemplate, matchers};
 
         let server = wiremock::MockServer::start().await;
@@ -222,7 +222,7 @@ mod tests {
 
     #[cfg(feature = "alias")]
     #[tokio::test]
-    async fn legacy_generation_uses_alias_core_and_returns_only_address() {
+    async fn forwarded_username_generation_uses_alias_core_and_returns_only_address() {
         use bitwarden_api_base::new_http_client;
         use wiremock::{Mock, ResponseTemplate, matchers};
 
@@ -266,7 +266,7 @@ mod tests {
             Some("example.com".into()),
         )
         .await
-        .expect("legacy generation should succeed through alias-core");
+        .expect("forwarded-username generation should succeed through alias-core");
         assert_eq!(address, "simplelogin.yut3g8@aleeas.com");
 
         let fake_token_error = super::generate(
@@ -276,7 +276,7 @@ mod tests {
             Some("example.com".into()),
         )
         .await
-        .expect_err("invalid authentication should retain the legacy error variant");
+        .expect_err("invalid authentication should retain the public error variant");
         assert_eq!(
             fake_token_error.to_string(),
             UsernameError::InvalidApiKey.to_string()

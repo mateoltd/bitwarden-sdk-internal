@@ -10,10 +10,53 @@ if (!artifactDirectory || !outputDirectory) {
   process.exit(2);
 }
 
-const sourceCommit = process.env.SOURCE_COMMIT;
-if (!/^[0-9a-f]{40}$/.test(sourceCommit ?? "")) {
-  console.error("SOURCE_COMMIT must be a full Git commit SHA");
-  process.exit(1);
+const requireFullCommit = (value, label) => {
+  if (!/^[0-9a-f]{40}$/.test(value ?? "")) {
+    throw new Error(`${label} must be a full Git commit SHA`);
+  }
+  return value;
+};
+const requireFile = (environmentName) => {
+  const file = process.env[environmentName];
+  if (!file || !fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`${environmentName} must name a readable file`);
+  }
+  return file;
+};
+const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+const readTrimmed = (file) => fs.readFileSync(file, "utf8").trim();
+
+const sourceCommit = requireFullCommit(process.env.SOURCE_COMMIT, "SOURCE_COMMIT");
+const upstreamBase = requireFullCommit(
+  readTrimmed(requireFile("UPSTREAM_BASE_FILE")),
+  "UPSTREAM_BASE_FILE",
+);
+const providerCommit = requireFullCommit(
+  readTrimmed(requireFile("PROVIDER_PIN_FILE")),
+  "PROVIDER_PIN_FILE",
+);
+const releaseVersion = readTrimmed(requireFile("RELEASE_VERSION_FILE"));
+if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
+  throw new Error(`RELEASE_VERSION_FILE is not valid SemVer: ${releaseVersion}`);
+}
+
+const typescriptPackage = readJson(requireFile("TYPESCRIPT_PACKAGE_FILE"));
+if (typescriptPackage.name !== "@bitwarden/sdk-internal") {
+  throw new Error("The TypeScript package name is no longer @bitwarden/sdk-internal");
+}
+if (typescriptPackage.version !== releaseVersion) {
+  throw new Error(
+    `TypeScript package version ${typescriptPackage.version} does not match ${releaseVersion}`,
+  );
+}
+
+const integration = readJson(requireFile("CLIENT_INTEGRATION_FILE"));
+if (
+  integration.schemaVersion !== 1 ||
+  !Array.isArray(integration.requiredClientIntegrationSteps) ||
+  integration.requiredClientIntegrationSteps.length === 0
+) {
+  throw new Error("CLIENT_INTEGRATION_FILE has an unsupported or empty schema");
 }
 
 const walk = (directory) =>
@@ -23,8 +66,7 @@ const walk = (directory) =>
   });
 const files = walk(artifactDirectory).sort();
 if (files.length === 0) {
-  console.error("Release manifest gate failed: no artifacts were downloaded");
-  process.exit(1);
+  throw new Error("Release manifest gate failed: no artifacts were downloaded");
 }
 
 const artifacts = files.map((file) => {
@@ -35,21 +77,116 @@ const artifacts = files.map((file) => {
     sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
   };
 });
+const artifactByPath = new Map(artifacts.map((artifact) => [artifact.path, artifact]));
+const assertPackageProvenance = (directory) => {
+  const sourcePath = `${directory}/VERSION`;
+  const versionPath = `${directory}/PACKAGE_VERSION`;
+  if (!artifactByPath.has(sourcePath) || !artifactByPath.has(versionPath)) {
+    throw new Error(`${directory} is missing source or package version provenance`);
+  }
+  if (readTrimmed(path.join(artifactDirectory, sourcePath)) !== sourceCommit) {
+    throw new Error(`${sourcePath} does not match SOURCE_COMMIT`);
+  }
+  if (readTrimmed(path.join(artifactDirectory, versionPath)) !== releaseVersion) {
+    throw new Error(`${versionPath} does not match RELEASE_VERSION_FILE`);
+  }
+};
+
+for (const directory of [
+  "alias-sdk-typescript",
+  "alias-sdk-swift",
+  "alias-sdk-kotlin",
+  "alias-sdk-android",
+]) {
+  assertPackageProvenance(directory);
+}
+
+const packageDefinitions = [
+  {
+    id: "typescriptWasm",
+    name: "@bitwarden/sdk-internal",
+    format: "npm-tarball",
+    matches: (artifactPath) =>
+      artifactPath.startsWith("alias-sdk-typescript/") && artifactPath.endsWith(".tgz"),
+  },
+  {
+    id: "swift",
+    name: "BitwardenSdk",
+    format: "swift-package-tarball",
+    matches: (artifactPath) =>
+      artifactPath.startsWith("alias-sdk-swift/") && artifactPath.endsWith(".tar.gz"),
+  },
+  {
+    id: "kotlinJvm",
+    name: "bitwarden-alias-sdk-kotlin-host",
+    format: "jar-with-host-native-library",
+    matches: (artifactPath) =>
+      artifactPath.startsWith("alias-sdk-kotlin/") && artifactPath.endsWith(".jar"),
+    supportingMatches: (artifactPath) =>
+      artifactPath.startsWith("alias-sdk-kotlin/") && artifactPath.endsWith(".so"),
+  },
+  {
+    id: "android",
+    name: "com.bitwarden.sdk",
+    format: "aar",
+    matches: (artifactPath) =>
+      artifactPath.startsWith("alias-sdk-android/") && artifactPath.endsWith(".aar"),
+  },
+];
+const packages = Object.fromEntries(
+  packageDefinitions.map(({ id, name, format, matches, supportingMatches }) => {
+    const matchingArtifacts = artifacts.filter(({ path: artifactPath }) => matches(artifactPath));
+    if (matchingArtifacts.length !== 1) {
+      throw new Error(
+        `Release manifest expected exactly one ${id} package, found ${matchingArtifacts.length}`,
+      );
+    }
+    const packageRecord = {
+      name,
+      version: releaseVersion,
+      format,
+      artifact: matchingArtifacts[0],
+    };
+    if (supportingMatches) {
+      const supportingArtifacts = artifacts.filter(({ path: artifactPath }) =>
+        supportingMatches(artifactPath),
+      );
+      if (supportingArtifacts.length !== 1) {
+        throw new Error(
+          `Release manifest expected exactly one ${id} supporting artifact, found ${supportingArtifacts.length}`,
+        );
+      }
+      packageRecord.supportingArtifacts = supportingArtifacts;
+    }
+    return [id, packageRecord];
+  }),
+);
+
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   sourceCommit,
-  upstreamBase: fs.readFileSync(process.env.UPSTREAM_BASE_FILE, "utf8").trim(),
-  clientsContract: JSON.parse(fs.readFileSync(process.env.CLIENTS_CONTRACT_FILE, "utf8")),
+  releaseVersion,
+  upstreamBase,
+  providerPin: {
+    provider: "SimpleLogin",
+    repository: "https://github.com/simple-login/app.git",
+    commit: providerCommit,
+  },
+  clientsContract: readJson(requireFile("CLIENTS_CONTRACT_FILE")),
+  packages,
+  requiredClientIntegrationSteps: integration.requiredClientIntegrationSteps,
   artifacts,
 };
 
 fs.mkdirSync(outputDirectory, { recursive: true });
 fs.writeFileSync(
-  path.join(outputDirectory, "release-manifest.json"),
+  path.join(outputDirectory, "handoff-manifest.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 fs.writeFileSync(
   path.join(outputDirectory, "SHA256SUMS"),
   `${artifacts.map(({ sha256, path: artifactPath }) => `${sha256}  ${artifactPath}`).join("\n")}\n`,
 );
-console.log(`Release manifest records ${artifacts.length} files from ${sourceCommit}`);
+console.log(
+  `Handoff manifest records ${Object.keys(packages).length} packages and ${artifacts.length} files from ${sourceCommit}`,
+);

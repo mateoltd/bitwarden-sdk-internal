@@ -1,6 +1,6 @@
 {
-  "contractVersion": 1,
-  "modelRevision": "alias-security-v1",
+  "contractVersion": 2,
+  "modelRevision": "alias-security-v2-current-only",
   "modelFiles": [
     "AliasVault.tla",
     "AliasVault.cfg",
@@ -8,10 +8,9 @@
     "AliasLifecycle.cfg",
     "AliasLifecycleQuiescent.cfg"
   ],
-  "modelSha256": "a98ba7b14f16c60550ed9b1b40cfa77769752042213a6237d837f7dec3688893",
+  "modelSha256": "920a3c7ddd38fe851ce7306fedb82a61578593a2b6d76c77b60e214bcb795eb0",
   "referenceSchema": {
     "version": 2,
-    "legacyVersion": 1,
     "vaultFieldName": "bitwarden.alias.reference",
     "orderedFields": [
       "version",
@@ -21,7 +20,7 @@
       "aliasId",
       "address"
     ],
-    "forbiddenFields": ["apiToken", "token", "credential", "password", "signedSuffix"],
+    "forbiddenFields": ["apiToken", "token", "credential", "password", "signedSuffix", "mailboxCredential"],
     "credentialSentinel": "formal-secret-must-never-cross-a-reference-boundary"
   },
   "identities": {
@@ -38,7 +37,7 @@
   },
   "referenceVectors": [
     {
-      "name": "current-reference-canonical-order-and-scope",
+      "name": "primary-account-alias-seven",
       "identity": "primary",
       "aliasId": 7,
       "address": "first@example.test",
@@ -52,39 +51,20 @@
       "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"22222222-2222-4222-8222-222222222222\",\"aliasId\":7,\"address\":\"second@example.test\"}"
     }
   ],
-  "migrationVectors": [
-    {
-      "name": "legacy-unique-connection",
-      "input": "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":41,\"address\":\"legacy@example.test\"}",
-      "connections": ["primary"],
-      "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":41,\"address\":\"legacy@example.test\"}"
-    },
-    {
-      "name": "legacy-same-origin-account-ambiguity",
-      "input": "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"aliasId\":41,\"address\":\"legacy@example.test\"}",
-      "connections": ["primary", "sameOriginSecondAccount"],
-      "expectedError": "legacy alias reference matches multiple provider connections"
-    },
-    {
-      "name": "current-reference-migration-is-idempotent",
-      "input": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":41,\"address\":\"legacy@example.test\"}",
-      "connections": ["sameOriginSecondAccount"],
-      "expectedCanonical": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":41,\"address\":\"legacy@example.test\"}"
-    }
-  ],
   "reconciliationVectors": [
     {
-      "name": "bind-once-and-preserve-unrelated-items",
+      "name": "refresh-current-reference-and-preserve-unrelated-items",
       "identity": "primary",
       "aliases": [{ "id": 7, "address": "first@example.test" }],
       "ciphers": [
         {
           "id": "00000000-0000-4000-8000-000000000001",
-          "username": "FIRST@example.test",
+          "username": "old-first@example.test",
           "name": "Alias login",
           "notes": "unrelated target notes",
           "customFieldName": "unrelated.custom",
-          "customFieldValue": "preserve-target-field"
+          "customFieldValue": "preserve-target-field",
+          "aliasReference": "{\"version\":2,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":7,\"address\":\"old-first@example.test\"}"
         },
         {
           "id": "00000000-0000-4000-8000-000000000002",

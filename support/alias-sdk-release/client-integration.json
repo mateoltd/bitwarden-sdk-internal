@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "requiredClientIntegrationSteps": [
+    {
+      "id": "verify-source-and-artifact",
+      "platforms": ["typescriptWasm", "swift", "kotlinJvm", "android"],
+      "instruction": "Verify the selected artifact SHA-256 and source commit against this handoff manifest before integrating it."
+    },
+    {
+      "id": "typescript-wasm-package",
+      "platforms": ["typescriptWasm"],
+      "instruction": "Install the exact .tgz as @bitwarden/sdk-internal, keep the existing WASM initialization path, and remove any client-local alias lifecycle or alias-reference implementation."
+    },
+    {
+      "id": "swift-package",
+      "platforms": ["swift"],
+      "instruction": "Extract the Swift archive, consume its BitwardenSdk package and BitwardenFFI.xcframework together, and remove any separately generated alias bindings."
+    },
+    {
+      "id": "kotlin-jvm-package",
+      "platforms": ["kotlinJvm"],
+      "instruction": "Place the versioned JAR and matching host native library on the same runtime path, then remove any separately generated alias bindings."
+    },
+    {
+      "id": "android-package",
+      "platforms": ["android"],
+      "instruction": "Add the versioned AAR as the sole Android SDK binary and remove any separately generated alias bindings or native libraries."
+    },
+    {
+      "id": "current-reference-schema",
+      "platforms": ["typescriptWasm", "swift", "kotlinJvm", "android"],
+      "instruction": "Persist only current-schema alias references created and parsed by the SDK; reject unsupported schemas and do not infer bindings from usernames or addresses."
+    },
+    {
+      "id": "provider-pin",
+      "platforms": ["typescriptWasm", "swift", "kotlinJvm", "android"],
+      "instruction": "Use the provider commit recorded in providerPin when reproducing the real SimpleLogin lifecycle gate."
+    }
+  ]
+}

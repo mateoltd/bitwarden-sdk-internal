@@ -7,7 +7,7 @@ external provider satisfies them.
 ## Assets and trust boundaries
 
 The protected assets are provider credentials, provider-account identity, provider alias state,
-alias-to-vault bindings, and vault items unrelated to aliases. Provider responses, legacy vault
+alias-to-vault bindings, and vault items unrelated to aliases. Provider responses, vault reference
 fields, decrypted `CipherView` inputs, concurrent clients, and delayed or replayed responses are
 untrusted inputs. The authenticated provider origin and the caller's normal vault encryption and
 persistence path are outside the proof boundary and are explicit assumptions below.
@@ -21,13 +21,10 @@ persistence path are outside the proof boundary and are explicit assumptions bel
 - **AUTH-1 Scoped transitions.** A lifecycle or reconciliation transition MUST target the stable
   resource named by the active connection. A foreign provider, instance, connection, alias ID, or
   cipher reference MUST be rejected or skipped without mutation.
-- **MIG-1 Explicit legacy migration.** Version 1 references MUST NOT select a provider account. A
-  version 1 reference MAY migrate only when exactly one validated candidate has the same provider
-  and canonical instance. Zero, multiple, or duplicate candidates MUST fail closed. Migrating a
-  current reference MUST be idempotent.
-- **REC-1 Deterministic reconciliation.** Planning MUST be non-mutating. Automatic bind or refresh
-  MAY occur only for one unambiguous claim. Duplicate alias IDs, duplicate addresses, duplicate
-  cipher IDs, duplicate reserved fields, stale plans, and conflicting claims MUST fail or produce no
+- **REC-1 Deterministic reconciliation.** Planning MUST be non-mutating. Automatic refresh MAY
+  occur only for one unambiguous current reference. Ciphers without a current reference MUST
+  NOT be inferred from their username or address. Duplicate alias IDs, duplicate cipher IDs,
+  duplicate reserved fields, stale plans, and conflicting current claims MUST fail or produce no
   repair. Apply MUST validate every action before its first mutation.
 - **REC-2 Idempotence and frame condition.** Reapplying a valid plan MUST be a no-op once its
   postcondition is satisfied. Reconciliation MAY change only the target login username and the one
@@ -51,15 +48,14 @@ persistence path are outside the proof boundary and are explicit assumptions bel
   closed.
 - **SECRET-1 Non-disclosure.** Reference serialization MUST NOT contain an API token, password,
   signed suffix, credential-derived connection ID, URL user information, query credential, or
-  fragment credential. Parse, migration, reconciliation, display, and debug errors MUST NOT echo a
+  fragment credential. Parse, reconciliation, display, and debug errors MUST NOT echo a
   reference payload or provider-controlled credential material.
 
 ## Safety and liveness
 
 Safety claims hold for every state explored by the checked finite abstractions: a bad identity,
-unauthorized write, ambiguous migration, destructive reconciliation, credential-bearing schema,
-false response-based success, replay after an unknown result, or delete/disable conflation is never
-reached.
+unauthorized write, destructive reconciliation, credential-bearing schema, false response-based
+success, replay after an unknown result, or delete/disable conflation is never reached.
 
 Liveness is deliberately narrower. Under weak scheduling fairness, every lifecycle request reaches a
 terminal success or explicit failure within the attempt bound. Successful convergence is proved only

@@ -11,8 +11,6 @@ import {
   apply_alias_reconciliation,
   bind_alias_reference,
   create_alias_reference,
-  migrate_alias_reference,
-  migrate_cipher_alias_reference,
   parse_alias_reference,
   plan_alias_reconciliation,
   serialize_alias_reference,
@@ -33,11 +31,6 @@ type ConformanceVectors = {
     aliasId: number;
     address: string;
     expectedCanonical: string;
-  }>;
-  migrationVectors: Array<{
-    name: string;
-    input: string;
-    expectedCanonical?: string;
   }>;
 };
 
@@ -174,33 +167,19 @@ test("isolates overlapping provider IDs for two accounts on one origin", () => {
   expect(secondPlan.summary.skippedCiphers).toBe(1n);
 });
 
-test("requires explicit, unambiguous v1 migration and rewrites the reserved field", () => {
-  const migrationVector = conformance.migrationVectors.find(
-    (vector) => vector.name === "legacy-unique-connection",
+test("does not infer a binding from an address without a current reference", () => {
+  const providerAlias = alias(7, "first@example.test");
+  const ordinaryLogin = cipher(3, "first@example.test");
+
+  const plan = plan_alias_reconciliation(
+    identity(CONNECTION_ONE),
+    [providerAlias],
+    [ordinaryLogin],
   );
-  expect(migrationVector).toBeDefined();
-  const legacy = migrationVector!.input;
 
-  expect(() => parse_alias_reference(sensitive(legacy))).toThrow("explicit connection migration");
-  expect(() =>
-    migrate_alias_reference(sensitive(legacy), [
-      identity(CONNECTION_ONE),
-      identity(CONNECTION_TWO),
-    ]),
-  ).toThrow("matches multiple provider connections");
-
-  const migrated = migrate_alias_reference(sensitive(legacy), [identity(CONNECTION_ONE)]);
-  expect(migrated).toBe(migrationVector!.expectedCanonical);
-  expect(parse_alias_reference(migrated).connectionId).toBe(CONNECTION_ONE);
-  expect(migrate_alias_reference(migrated, [identity(CONNECTION_TWO)])).toBe(migrated);
-
-  const legacyCipher = cipher(3, "legacy@example.test", [
-    { name: REFERENCE_FIELD, value: legacy, type: FieldType.Hidden, linkedId: undefined },
-  ]);
-  const output = migrate_cipher_alias_reference(legacyCipher, [identity(CONNECTION_ONE)]);
-  expect(output.migration.changed).toBe(true);
-  expect(output.migration.reference?.connectionId).toBe(CONNECTION_ONE);
-  expect(output.cipher.fields?.[0].value).toBe(migrated);
+  expect(plan.summary.unboundAliases).toBe(1n);
+  expect(plan.summary.proposedRepairs).toBe(0n);
+  expect(plan.actions).toHaveLength(0);
 });
 
 test("safely classifies malformed, duplicate, oversized, and visible reserved fields", () => {
@@ -242,12 +221,15 @@ test("plans and applies 10,000 real CipherView values idempotently", () => {
   const aliases = Array.from({ length: count }, (_, index) =>
     alias(index + 1, `alias-${index + 1}@example.test`),
   );
-  const ciphers = aliases.map((providerAlias, index) =>
-    cipher(index + 1, providerAlias.email as string),
-  );
+  const ciphers = aliases.map((providerAlias, index) => {
+    const encoded = create_alias_reference(identity(CONNECTION_ONE), providerAlias);
+    const bound = bind_alias_reference(encoded, cipher(index + 1, providerAlias.email as string));
+    bound.cipher.login!.username = `stale-${index + 1}@example.test`;
+    return bound.cipher;
+  });
 
   const plan = plan_alias_reconciliation(identity(CONNECTION_ONE), aliases, ciphers);
-  expect(plan.summary.matchedByAddress).toBe(BigInt(count));
+  expect(plan.summary.staleBindings).toBe(BigInt(count));
   expect(plan.summary.proposedRepairs).toBe(BigInt(count));
 
   const applied = apply_alias_reconciliation(plan, aliases, ciphers);

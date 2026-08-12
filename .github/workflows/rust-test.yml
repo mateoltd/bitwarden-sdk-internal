@@ -78,13 +78,8 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Check model
-        run: ./formal/alias-security/check.sh
-
-      - name: Check production refinement
-        run: |
-          cargo test -p bitwarden-alias --test security_conformance
-          cargo test -p bitwarden-uniffi security_conformance
+      - name: Check consolidated alias security contract
+        run: scripts/alias-sdk/check-security-contract.sh
 
   test-wasm:
     name: WASM

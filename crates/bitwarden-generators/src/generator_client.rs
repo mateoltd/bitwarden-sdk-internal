@@ -116,9 +116,9 @@ impl GeneratorClient {
     /// lifecycle data.
     ///
     /// This is the first-class counterpart to [`Self::username`] with
-    /// [`UsernameGeneratorRequest::Forwarded`]. The legacy API continues to return only the alias
-    /// address for compatibility. This API returns the alias unchanged so callers can retain its
-    /// stable identifier for later lifecycle operations.
+    /// [`UsernameGeneratorRequest::Forwarded`]. The established forwarded-username API continues
+    /// to return only the alias address for public compatibility. This API returns the alias
+    /// unchanged so callers can retain its stable identifier for later lifecycle operations.
     #[cfg(feature = "alias")]
     pub async fn simplelogin_alias(
         &self,

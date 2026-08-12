@@ -13,6 +13,7 @@ on:
       - "crates/bitwarden-generators/**"
       - "crates/bitwarden-uniffi/**"
       - "crates/bitwarden-wasm-internal/**"
+      - "formal/alias-security/**"
       - "package-lock.json"
       - "package.json"
       - "scripts/alias-sdk/**"
@@ -22,7 +23,7 @@ on:
   push:
     branches:
       - "main"
-      - "build/alias-sdk-release-lane"
+      - "integration/alias-platform"
 
 permissions:
   contents: read
@@ -36,7 +37,7 @@ env:
 
 jobs:
   policy:
-    name: Policy, secrets, and Rust contract
+    name: Policy and consolidated security contract
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout full history
@@ -49,6 +50,12 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.96.0"
+
+      - name: Install Java for TLA+
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: 21
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -74,8 +81,8 @@ jobs:
       - name: Verify commercial boundary
         run: scripts/check-oss-artifact-boundary.sh
 
-      - name: Test authoritative alias contract
-        run: cargo test --locked --package bitwarden-alias --all-features
+      - name: Test authoritative alias security contract
+        run: scripts/alias-sdk/check-security-contract.sh
 
   wasm:
     name: TypeScript and WASM clean room
@@ -110,6 +117,9 @@ jobs:
 
       - name: Build release package
         run: scripts/alias-sdk/build-wasm.sh "$RUNNER_TEMP/alias-sdk-typescript"
+
+      - name: Test WASM runtime conformance
+        run: scripts/alias-sdk/test-wasm-conformance.sh
 
       - name: Test bitwarden-clients-compatible consumer
         run: |
@@ -160,7 +170,9 @@ jobs:
         run: scripts/alias-sdk/build-swift.sh "$RUNNER_TEMP/alias-sdk-swift"
 
       - name: Test clean-room package consumer
-        run: scripts/alias-sdk/test-consumer.sh swift "$RUNNER_TEMP/alias-sdk-swift/bitwarden-alias-sdk-swift.tar.gz"
+        run: |
+          package="$(find "$RUNNER_TEMP/alias-sdk-swift" -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          scripts/alias-sdk/test-consumer.sh swift "$package"
 
       - name: Record build environment
         run: |
@@ -355,10 +367,12 @@ jobs:
 
       - name: Stage Android artifact and environment
         run: |
+          release_version="$(scripts/alias-sdk/read-release-version.sh)"
           mkdir -p "$RUNNER_TEMP/alias-sdk-android"
           cp crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar \
-            "$RUNNER_TEMP/alias-sdk-android/bitwarden-alias-sdk.aar"
+            "$RUNNER_TEMP/alias-sdk-android/bitwarden-alias-sdk-android-${release_version}.aar"
           git rev-parse HEAD >"$RUNNER_TEMP/alias-sdk-android/VERSION"
+          printf '%s\n' "$release_version" >"$RUNNER_TEMP/alias-sdk-android/PACKAGE_VERSION"
           {
             echo "source_commit=$(git rev-parse HEAD)"
             echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
@@ -375,10 +389,37 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  simplelogin:
+    name: Pinned real SimpleLogin lifecycle
+    runs-on: ubuntu-24.04
+    needs: policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-simplelogin
+
+      - name: Run pinned provider lifecycle
+        run: support/simplelogin/lab.sh test
+
+      - name: Clean up provider lab
+        if: always()
+        run: support/simplelogin/lab.sh down || true
+
   bundle:
     name: Assemble checksummed candidate
     runs-on: ubuntu-24.04
-    needs: [wasm, swift, kotlin, android]
+    needs: [wasm, swift, kotlin, android, simplelogin]
     steps:
       - name: Checkout manifest inputs
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -399,14 +440,18 @@ jobs:
       - name: Create release manifest
         env:
           CLIENTS_CONTRACT_FILE: ${{ github.workspace }}/support/alias-sdk-release/consumers/typescript/bitwarden-clients-contract.json
+          CLIENT_INTEGRATION_FILE: ${{ github.workspace }}/support/alias-sdk-release/client-integration.json
+          PROVIDER_PIN_FILE: ${{ github.workspace }}/support/simplelogin/SIMPLELOGIN_COMMIT
+          RELEASE_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/VERSION
           SOURCE_COMMIT: ${{ github.sha }}
+          TYPESCRIPT_PACKAGE_FILE: ${{ github.workspace }}/crates/bitwarden-wasm-internal/npm/package.json
           UPSTREAM_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/UPSTREAM_BASE
         run: |
           scripts/alias-sdk/create-release-manifest.mjs \
             "$RUNNER_TEMP/candidate/artifacts" \
             "$RUNNER_TEMP/candidate"
 
-      - name: Verify manifest checksums
+      - name: Verify handoff manifest checksums
         working-directory: ${{ runner.temp }}/candidate/artifacts
         run: sha256sum --check ../SHA256SUMS
 
@@ -428,9 +473,10 @@ jobs:
             echo "# Alias SDK release candidate"
             echo
             echo "- Source commit: \`$(git rev-parse HEAD)\`"
+            echo "- Package version: \`$(scripts/alias-sdk/read-release-version.sh)\`"
             echo "- Workflow artifact ID: \`$ARTIFACT_ID\`"
             echo "- Workflow artifact SHA-256: \`$ARTIFACT_DIGEST\`"
             echo "- Registry publication: disabled"
             echo
-            echo "The candidate contains per-file SHA-256 hashes, source pins, and host build versions."
+            echo "The candidate contains the machine-readable handoff manifest, per-file SHA-256 hashes, source pins, and required client integration steps."
           } >>"$GITHUB_STEP_SUMMARY"

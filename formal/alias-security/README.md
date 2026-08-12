@@ -4,22 +4,17 @@ This directory contains the normative alias [security contract](SECURITY-CONTRAC
 transition systems, the [proof inventory and gap matrix](PROOF-COVERAGE.md), and canonical
 cross-language conformance vectors.
 
-Run the machine checker with:
+Run the consolidated machine-checked contract with:
 
 ```bash
-./formal/alias-security/check.sh
+scripts/alias-sdk/check-security-contract.sh
 ```
 
-The script downloads TLA+ 1.8.0 from the official release, verifies its pinned SHA-256 digest, and
+The script downloads TLA+ 1.8.0 from the official release, verifies its pinned SHA-256 digest,
 checks the vault safety model, adversarial concurrent lifecycle model, and reliable/quiescent
-liveness model. Java 11 or newer and `curl` are required.
+liveness model, then runs the Rust and UniFFI refinement gates. Java 11 or newer and `curl` are
+required.
 
-Run the native refinement gates with:
-
-```bash
-cargo test -p bitwarden-alias --test security_conformance
-cargo test -p bitwarden-uniffi security_conformance
-```
-
-The WASM build's Jest suite reads the same `conformance-vectors.json` and drives the exported
-reference/reconciliation functions and replay-sensitive lifecycle client.
+After building the versioned WASM package, `scripts/alias-sdk/test-wasm-conformance.sh` reads the
+same `conformance-vectors.json` and drives the exported reference/reconciliation functions and
+replay-sensitive lifecycle client.

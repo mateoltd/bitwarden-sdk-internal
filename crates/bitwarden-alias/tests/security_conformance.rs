@@ -14,8 +14,7 @@ use std::{
 use bitwarden_alias::{
     ALIAS_REFERENCE_FIELD_NAME, ALIAS_REFERENCE_VERSION, Alias, AliasClient, AliasClientSettings,
     AliasError, AliasId, AliasProviderIdentity, MailboxId, MailboxRef, apply_alias_reconciliation,
-    create_alias_reference, migrate_alias_reference, parse_alias_reference,
-    plan_alias_reconciliation,
+    create_alias_reference, parse_alias_reference, plan_alias_reconciliation,
 };
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_vault::{
@@ -38,7 +37,6 @@ struct Vectors {
     reference_schema: ReferenceSchema,
     identities: Identities,
     reference_vectors: Vec<ReferenceVector>,
-    migration_vectors: Vec<MigrationVector>,
     reconciliation_vectors: Vec<ReconciliationVector>,
     lifecycle_traces: Vec<LifecycleTrace>,
     operation_semantics: OperationSemantics,
@@ -48,7 +46,6 @@ struct Vectors {
 #[serde(rename_all = "camelCase")]
 struct ReferenceSchema {
     version: u32,
-    legacy_version: u32,
     vault_field_name: String,
     ordered_fields: Vec<String>,
     forbidden_fields: Vec<String>,
@@ -82,16 +79,6 @@ struct ReferenceVector {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MigrationVector {
-    name: String,
-    input: String,
-    connections: Vec<String>,
-    expected_canonical: Option<String>,
-    expected_error: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct ReconciliationVector {
     name: String,
     identity: String,
@@ -115,6 +102,7 @@ struct CipherFixture {
     notes: String,
     custom_field_name: String,
     custom_field_value: String,
+    alias_reference: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,6 +206,20 @@ fn cipher(fixture: &CipherFixture) -> CipherView {
     let timestamp = "2026-08-12T00:00:00Z"
         .parse()
         .expect("fixture timestamp must parse");
+    let mut fields = vec![FieldView {
+        name: Some(fixture.custom_field_name.clone()),
+        value: Some(fixture.custom_field_value.clone()),
+        r#type: FieldType::Text,
+        linked_id: None,
+    }];
+    if let Some(reference) = &fixture.alias_reference {
+        fields.push(FieldView {
+            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
+            value: Some(reference.clone()),
+            r#type: FieldType::Hidden,
+            linked_id: None,
+        });
+    }
     CipherView {
         id: Some(fixture.id.parse().expect("fixture cipher ID must parse")),
         organization_id: None,
@@ -252,12 +254,7 @@ fn cipher(fixture: &CipherFixture) -> CipherView {
         local_data: None,
         attachments: None,
         attachment_decryption_failures: None,
-        fields: Some(vec![FieldView {
-            name: Some(fixture.custom_field_name.clone()),
-            value: Some(fixture.custom_field_value.clone()),
-            r#type: FieldType::Text,
-            linked_id: None,
-        }]),
+        fields: Some(fields),
         password_history: None,
         creation_date: timestamp,
         deleted_date: None,
@@ -303,8 +300,8 @@ fn alias_json(id: u64, enabled: bool) -> Value {
 #[test]
 fn production_reference_schema_refines_the_formal_contract() {
     let vectors = vectors();
-    assert_eq!(vectors.contract_version, 1);
-    assert_eq!(vectors.model_revision, "alias-security-v1");
+    assert_eq!(vectors.contract_version, 2);
+    assert_eq!(vectors.model_revision, "alias-security-v2-current-only");
     assert_eq!(
         vectors.model_files,
         [
@@ -338,7 +335,6 @@ fn production_reference_schema_refines_the_formal_contract() {
         .collect::<String>();
     assert_eq!(model_sha256, vectors.model_sha256);
     assert_eq!(vectors.reference_schema.version, ALIAS_REFERENCE_VERSION);
-    assert_eq!(vectors.reference_schema.legacy_version, 1);
     assert_eq!(
         vectors.reference_schema.vault_field_name,
         ALIAS_REFERENCE_FIELD_NAME
@@ -388,32 +384,6 @@ fn production_reference_schema_refines_the_formal_contract() {
     let error = parse_alias_reference(&hostile).expect_err("credential field must be rejected");
     let rendered = format!("{error:?} {error}");
     assert!(!rendered.contains(&vectors.reference_schema.credential_sentinel));
-}
-
-#[test]
-fn production_migration_refines_unambiguous_and_idempotent_rules() {
-    let vectors = vectors();
-    for vector in &vectors.migration_vectors {
-        let connections: Vec<_> = vector
-            .connections
-            .iter()
-            .map(|name| identity(select_identity(&vectors, name)))
-            .collect();
-        match (&vector.expected_canonical, &vector.expected_error) {
-            (Some(expected), None) => {
-                let actual = migrate_alias_reference(&vector.input, &connections)
-                    .expect("successful migration vector must migrate");
-                assert_eq!(actual.expose(), expected, "{}", vector.name);
-            }
-            (None, Some(expected)) => {
-                let error = migrate_alias_reference(&vector.input, &connections)
-                    .expect_err("rejected migration vector must fail");
-                assert_eq!(error.to_string(), *expected, "{}", vector.name);
-                assert!(!error.to_string().contains("legacy@example.test"));
-            }
-            _ => panic!("{} has an invalid expected result", vector.name),
-        }
-    }
 }
 
 #[test]

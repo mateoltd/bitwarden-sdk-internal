@@ -4,10 +4,26 @@ set -euo pipefail
 REPOSITORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FORBIDDEN_PACKAGES='^bitwarden-(commercial-vault|pam|sm) '
 FORBIDDEN_EXPORTS='CommercialPasswordManagerClient|CommercialVaultClient|PamClient|PAMClient|SecretsManagerClient|bitwarden[_-](commercial|license|pam|sm)'
+FORBIDDEN_ALIAS_MIGRATION_EXPORTS='migrate_alias_reference|migrate_cipher_alias_reference|migrateAliasReference|migrateCipherAliasReference|AliasReferenceMigration|AliasCipherMigration'
 
 fail() {
     echo "OSS artifact boundary check failed: $*" >&2
     exit 1
+}
+
+check_release_provenance() {
+    local path="$1"
+    local expected_source_commit
+    local expected_version
+
+    [[ -f "$path/VERSION" ]] || fail "$path/VERSION is missing"
+    [[ -f "$path/PACKAGE_VERSION" ]] || fail "$path/PACKAGE_VERSION is missing"
+    expected_source_commit="$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)"
+    [[ "$(tr -d '[:space:]' <"$path/VERSION")" == "$expected_source_commit" ]] \
+        || fail "$path/VERSION does not identify the source commit"
+    expected_version="$("$REPOSITORY_ROOT/scripts/alias-sdk/read-release-version.sh")"
+    [[ "$(tr -d '[:space:]' <"$path/PACKAGE_VERSION")" == "$expected_version" ]] \
+        || fail "$path/PACKAGE_VERSION does not identify the release version"
 }
 
 check_dependency_graph() {
@@ -73,11 +89,11 @@ check_generated_exports() {
 
     forbidden="$(
         find "$path" -type f \( -name '*.d.ts' -o -name '*.js' -o -name '*.swift' -o -name '*.kt' \) \
-            -exec grep -El "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -El "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
-        fail "$path exposes a commercial-only API"
+        fail "$path exposes a commercial-only or removed alias-migration API"
     fi
 }
 
@@ -96,6 +112,9 @@ check_wasm() {
         || fail "$path/bitwarden_wasm_internal_bg.wasm is missing"
     grep -Eq '"license": "GPL-3.0-only"' "$path/package.json" \
         || fail "$path/package.json must declare GPL-3.0-only"
+    [[ "$(node -p "require('$path/package.json').version")" == \
+        "$("$REPOSITORY_ROOT/scripts/alias-sdk/read-release-version.sh")" ]] \
+        || fail "$path/package.json does not identify the release version"
     grep -q 'GNU GENERAL PUBLIC LICENSE' "$path/LICENSE" \
         || fail "$path/LICENSE is not the GPL text"
     expected_source_commit="$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)"
@@ -109,11 +128,11 @@ check_wasm() {
     check_generated_exports "$path"
     forbidden="$(
         find "$path" -type f \( -name '*.wasm' -o -name '*.js' \) \
-            -exec grep -aEil "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
-        fail "$path contains a commercial-only WASM symbol"
+        fail "$path contains a commercial-only or removed alias-migration WASM symbol"
     fi
 
     (
@@ -124,11 +143,15 @@ check_wasm() {
 
 check_swift() {
     local path="$1"
+    local require_provenance="${2:-false}"
     local forbidden
 
     [[ -f "$path/LICENSE_GPL.txt" ]] || fail "$path/LICENSE_GPL.txt is missing"
     [[ -d "$path/BitwardenFFI.xcframework" ]] \
         || fail "$path/BitwardenFFI.xcframework is missing"
+    if [[ "$require_provenance" == "true" ]]; then
+        check_release_provenance "$path"
+    fi
     find "$path/Sources/BitwardenSdk" -type f -name '*.swift' -print -quit | grep -q . \
         || fail "$path has no generated Swift sources"
     grep -q 'GNU GENERAL PUBLIC LICENSE' "$path/LICENSE_GPL.txt" \
@@ -137,11 +160,11 @@ check_swift() {
     check_generated_exports "$path/Sources/BitwardenSdk"
     forbidden="$(
         find "$path/BitwardenFFI.xcframework" -type f \
-            -exec grep -aEil "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
-        fail "$path contains a commercial-only Swift symbol"
+        fail "$path contains a commercial-only or removed alias-migration Swift symbol"
     fi
 }
 
@@ -175,11 +198,11 @@ check_kotlin() {
         || fail "$aar does not contain the GPL text"
     forbidden="$(
         find "$temporary_dir" -type f \( -name '*.class' -o -name '*.so' \) \
-            -exec grep -aEl "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
-        fail "$aar contains a commercial-only API or native symbol"
+        fail "$aar contains a commercial-only or removed alias-migration API or native symbol"
     fi
     rm -rf "$temporary_dir"
     trap - RETURN
@@ -191,6 +214,7 @@ check_kotlin_host() {
     local forbidden
 
     [[ -f "$jar" ]] || fail "$jar is missing"
+    check_release_provenance "$(dirname "$jar")"
 
     temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/bitwarden-oss-kotlin-host.XXXXXX")"
     trap 'rm -rf "$temporary_dir"' RETURN
@@ -203,11 +227,11 @@ check_kotlin_host() {
     check_paths "$temporary_dir"
     forbidden="$(
         find "$temporary_dir" -type f -name '*.class' \
-            -exec grep -aEl "$FORBIDDEN_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_MIGRATION_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
-        fail "$jar contains a commercial-only API"
+        fail "$jar contains a commercial-only or removed alias-migration API"
     fi
     rm -rf "$temporary_dir"
     trap - RETURN
@@ -239,6 +263,11 @@ while [[ $# -gt 0 ]]; do
         --swift)
             [[ $# -ge 2 ]] || fail "--swift requires a package directory"
             check_swift "$2"
+            shift 2
+            ;;
+        --swift-release)
+            [[ $# -ge 2 ]] || fail "--swift-release requires a package directory"
+            check_swift "$2" true
             shift 2
             ;;
         --kotlin)
