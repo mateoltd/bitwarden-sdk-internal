@@ -317,9 +317,11 @@ UnknownOutcomeNotReplayed ==
 DeleteDispatchedAtMostOnce ==
     \A actor \in Actors : deleteRequests[actor] <= 1
 
-DeleteDoesNotDisable == lastAction = "delete" => enabled = beforeEnabled
+DeleteDoesNotDisable ==
+    lastAction \in {"delete", "deleteLost"} => enabled = beforeEnabled
 
-DisableDoesNotDelete == lastAction = "toggle" => deleted = beforeDeleted
+DisableDoesNotDelete ==
+    lastAction \in {"toggle", "toggleLost"} => deleted = beforeDeleted
 
 BoundedInterference ==
     \A actor \in Actors : attempts[actor] <= MaxAttempts

@@ -23,8 +23,8 @@
 | `AliasLifecycle`                    | safety   | `ReplayedResponseIgnored`          | Any replayed response leaves provider state unchanged.                                                                   |
 | `AliasLifecycle`                    | safety   | `UnknownOutcomeNotReplayed`        | An unknown mutation outcome is terminal for that request.                                                                |
 | `AliasLifecycle`                    | safety   | `DeleteDispatchedAtMostOnce`       | Delete is never automatically replayed.                                                                                  |
-| `AliasLifecycle`                    | safety   | `DeleteDoesNotDisable`             | Delete and disable have separate state effects.                                                                          |
-| `AliasLifecycle`                    | safety   | `DisableDoesNotDelete`             | Toggle-based disable cannot delete the resource.                                                                         |
+| `AliasLifecycle`                    | safety   | `DeleteDoesNotDisable`             | Confirmed and response-lost delete transitions cannot change enabled state.                                              |
+| `AliasLifecycle`                    | safety   | `DisableDoesNotDelete`             | Confirmed and response-lost toggles cannot delete the resource.                                                          |
 | `AliasLifecycle`                    | safety   | `BoundedInterference`              | Toggle attempts never exceed the production bound.                                                                       |
 | `AliasLifecycle`                    | liveness | `Terminates`                       | Under weak client-step fairness, every request reaches a terminal result.                                                |
 | `AliasLifecycle` reliable/quiescent | liveness | `AuthorizedSetConverges`           | One authorized client eventually observes its desired state.                                                             |
