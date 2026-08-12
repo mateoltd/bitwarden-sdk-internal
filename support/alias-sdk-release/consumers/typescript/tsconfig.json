@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": false,
+    "pretty": true,
+    "moduleResolution": "bundler",
+    "noImplicitAny": true,
+    "target": "ES2016",
+    "module": "ES2020",
+    "lib": ["es5", "es6", "es7", "dom", "ES2021", "ESNext.Disposable"],
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": false,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

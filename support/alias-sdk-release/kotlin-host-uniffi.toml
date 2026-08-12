@@ -1,0 +1,7 @@
+[bindings.kotlin]
+package_name = "com.bitwarden.sdk"
+cdylib_name = "bitwarden_uniffi"
+generate_immutable_records = true
+android = false
+omit_checksums = true
+
