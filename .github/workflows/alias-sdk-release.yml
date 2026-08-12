@@ -8,6 +8,7 @@ on:
       - ".gitleaks.toml"
       - "Cargo.lock"
       - "Cargo.toml"
+      - "Cross.toml"
       - "crates/bitwarden-alias/**"
       - "crates/bitwarden-generators/**"
       - "crates/bitwarden-uniffi/**"

@@ -27,6 +27,17 @@ grep -Eq '^distributionSha256Sum=[0-9a-f]{64}$' \
     "$repository_root/crates/bitwarden-uniffi/kotlin/gradle/wrapper/gradle-wrapper.properties" \
     || fail "the Gradle distribution must have a SHA-256 pin"
 
+for target in \
+    aarch64-linux-android \
+    armv7-linux-androideabi \
+    i686-linux-android \
+    x86_64-linux-android; do
+    grep -Eq \
+        "^image = \"ghcr[.]io/cross-rs/${target}@sha256:[0-9a-f]{64}\"$" \
+        "$repository_root/Cross.toml" \
+        || fail "the cross image for $target must be pinned by manifest digest"
+done
+
 clients_contract="$repository_root/support/alias-sdk-release/consumers/typescript/bitwarden-clients-contract.json"
 node -e '
   const fs = require("node:fs");
