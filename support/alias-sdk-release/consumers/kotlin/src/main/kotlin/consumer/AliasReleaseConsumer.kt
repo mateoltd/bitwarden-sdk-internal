@@ -41,4 +41,3 @@ fun main() {
     check(serializeAliasReference(parsed) == encoded)
     println("Kotlin alias SDK clean-room consumer passed")
 }
-

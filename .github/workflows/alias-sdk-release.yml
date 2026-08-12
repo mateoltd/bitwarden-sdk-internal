@@ -1,0 +1,434 @@
+name: Alias SDK release candidate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/alias-sdk-*.yml"
+      - ".gitleaks.toml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/bitwarden-alias/**"
+      - "crates/bitwarden-generators/**"
+      - "crates/bitwarden-uniffi/**"
+      - "crates/bitwarden-wasm-internal/**"
+      - "package-lock.json"
+      - "package.json"
+      - "scripts/alias-sdk/**"
+      - "scripts/check-oss-artifact-boundary.sh"
+      - "support/alias-sdk-release/**"
+      - "support/simplelogin/**"
+  push:
+    branches:
+      - "main"
+      - "build/alias-sdk-release-lane"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alias-sdk-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  policy:
+    name: Policy, secrets, and Rust contract
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-policy
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+
+      - name: Verify external source pins
+        run: scripts/alias-sdk/check-external-pins.sh
+
+      - name: Install checksum-pinned Gitleaks
+        run: scripts/alias-sdk/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
+
+      - name: Scan alias patch history for secrets
+        env:
+          GITLEAKS_BIN: ${{ runner.temp }}/gitleaks/gitleaks
+        run: scripts/alias-sdk/scan-secrets.sh
+
+      - name: Verify commercial boundary
+        run: scripts/check-oss-artifact-boundary.sh
+
+      - name: Test authoritative alias contract
+        run: cargo test --locked --package bitwarden-alias --all-features
+
+  wasm:
+    name: TypeScript and WASM clean room
+    runs-on: ubuntu-24.04
+    needs: policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+          cache: npm
+
+      - name: Install locked JavaScript build tools
+        run: npm ci --ignore-scripts
+
+      - name: Install Rust with WASM target
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-wasm
+
+      - name: Build release package
+        run: scripts/alias-sdk/build-wasm.sh "$RUNNER_TEMP/alias-sdk-typescript"
+
+      - name: Test bitwarden-clients-compatible consumer
+        run: |
+          package="$(find "$RUNNER_TEMP/alias-sdk-typescript" -maxdepth 1 -name '*.tgz' -print -quit)"
+          scripts/alias-sdk/test-consumer.sh typescript "$package"
+
+      - name: Record build environment
+        run: |
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            node --version
+            npm --version
+            rustc --version
+            wasm-opt --version
+          } >"$RUNNER_TEMP/alias-sdk-typescript/BUILD-ENVIRONMENT.txt"
+
+      - name: Upload TypeScript artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-typescript
+          path: ${{ runner.temp }}/alias-sdk-typescript
+          if-no-files-found: error
+          retention-days: 30
+
+  swift:
+    name: Swift clean room
+    runs-on: macos-14
+    needs: policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust with iOS targets
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+          targets: aarch64-apple-ios-sim,aarch64-apple-ios,x86_64-apple-ios
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-swift
+
+      - name: Build release package
+        run: scripts/alias-sdk/build-swift.sh "$RUNNER_TEMP/alias-sdk-swift"
+
+      - name: Test clean-room package consumer
+        run: scripts/alias-sdk/test-consumer.sh swift "$RUNNER_TEMP/alias-sdk-swift/bitwarden-alias-sdk-swift.tar.gz"
+
+      - name: Record build environment
+        run: |
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            rustc --version
+            swift --version
+            xcodebuild -version
+          } >"$RUNNER_TEMP/alias-sdk-swift/BUILD-ENVIRONMENT.txt"
+
+      - name: Upload Swift artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-swift
+          path: ${{ runner.temp }}/alias-sdk-swift
+          if-no-files-found: error
+          retention-days: 30
+
+  kotlin:
+    name: Kotlin JVM clean room
+    runs-on: ubuntu-24.04
+    needs: policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17.0.14+7"
+          cache: gradle
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-kotlin
+
+      - name: Build host package
+        run: scripts/alias-sdk/build-kotlin-host.sh "$RUNNER_TEMP/alias-sdk-kotlin"
+
+      - name: Test clean-room JVM consumer
+        run: scripts/alias-sdk/test-consumer.sh kotlin "$RUNNER_TEMP/alias-sdk-kotlin"
+
+      - name: Record build environment
+        run: |
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            rustc --version
+            java -version 2>&1
+          } >"$RUNNER_TEMP/alias-sdk-kotlin/BUILD-ENVIRONMENT.txt"
+
+      - name: Upload Kotlin artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-kotlin
+          path: ${{ runner.temp }}/alias-sdk-kotlin
+          if-no-files-found: error
+          retention-days: 30
+
+  android-native:
+    name: Android native ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    needs: policy
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            abi: arm64-v8a
+          - target: armv7-linux-androideabi
+            abi: armeabi-v7a
+          - target: x86_64-linux-android
+            abi: x86_64
+          - target: i686-linux-android
+            abi: x86
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-${{ matrix.target }}
+
+      - name: Install pinned cargo runner
+        run: cargo install cargo-run-bin --locked --version 1.7.4
+
+      - name: Verify cargo tool provenance
+        run: scripts/check-no-binstall.sh
+
+      - name: Build native library
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo bin cross build --locked --package bitwarden-uniffi --release --target="$TARGET"
+
+      - name: Stage native library
+        env:
+          ABI: ${{ matrix.abi }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/android-native/$ABI"
+          cp "target/$TARGET/release/libbitwarden_uniffi.so" "$RUNNER_TEMP/android-native/$ABI/"
+
+      - name: Upload native library
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-android-native-${{ matrix.abi }}
+          path: ${{ runner.temp }}/android-native
+          if-no-files-found: error
+          retention-days: 1
+
+  android:
+    name: Android AAR clean room
+    runs-on: ubuntu-24.04
+    needs: android-native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17.0.14+7"
+          cache: gradle
+
+      - name: Setup Android command-line tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          cmdline-tools-version: "12266719"
+          packages: ""
+
+      - name: Install pinned Android SDK and NDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.0.13004108"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >>"$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >>"$GITHUB_ENV"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-release-android-combine
+
+      - name: Download native libraries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: alias-android-native-*
+          path: ${{ runner.temp }}/android-native
+          merge-multiple: true
+
+      - name: Assemble AAR
+        run: |
+          jni="crates/bitwarden-uniffi/kotlin/sdk/src/main/jniLibs"
+          mkdir -p "$jni"
+          cp -R "$RUNNER_TEMP/android-native"/* "$jni/"
+          (
+            cd crates/bitwarden-uniffi/kotlin
+            ./build-schemas.sh
+            ./gradlew --no-daemon :sdk:assembleRelease
+          )
+
+      - name: Verify and test packaged AAR
+        run: |
+          aar="crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar"
+          scripts/check-oss-artifact-boundary.sh --kotlin "$aar"
+          scripts/alias-sdk/test-consumer.sh android "$aar"
+
+      - name: Stage Android artifact and environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/alias-sdk-android"
+          cp crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar \
+            "$RUNNER_TEMP/alias-sdk-android/bitwarden-alias-sdk.aar"
+          git rev-parse HEAD >"$RUNNER_TEMP/alias-sdk-android/VERSION"
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            rustc --version
+            java -version 2>&1
+            sdkmanager --version
+          } >"$RUNNER_TEMP/alias-sdk-android/BUILD-ENVIRONMENT.txt"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-android
+          path: ${{ runner.temp }}/alias-sdk-android
+          if-no-files-found: error
+          retention-days: 30
+
+  bundle:
+    name: Assemble checksummed candidate
+    runs-on: ubuntu-24.04
+    needs: [wasm, swift, kotlin, android]
+    steps:
+      - name: Checkout manifest inputs
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+
+      - name: Download candidate artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: alias-sdk-*
+          path: ${{ runner.temp }}/candidate/artifacts
+
+      - name: Create release manifest
+        env:
+          CLIENTS_CONTRACT_FILE: ${{ github.workspace }}/support/alias-sdk-release/consumers/typescript/bitwarden-clients-contract.json
+          SOURCE_COMMIT: ${{ github.sha }}
+          UPSTREAM_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/UPSTREAM_BASE
+        run: |
+          scripts/alias-sdk/create-release-manifest.mjs \
+            "$RUNNER_TEMP/candidate/artifacts" \
+            "$RUNNER_TEMP/candidate"
+
+      - name: Verify manifest checksums
+        working-directory: ${{ runner.temp }}/candidate/artifacts
+        run: sha256sum --check ../SHA256SUMS
+
+      - name: Upload release candidate
+        id: candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-release-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize candidate
+        env:
+          ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
+        run: |
+          {
+            echo "# Alias SDK release candidate"
+            echo
+            echo "- Source commit: \`$(git rev-parse HEAD)\`"
+            echo "- Workflow artifact ID: \`$ARTIFACT_ID\`"
+            echo "- Workflow artifact SHA-256: \`$ARTIFACT_DIGEST\`"
+            echo "- Registry publication: disabled"
+            echo
+            echo "The candidate contains per-file SHA-256 hashes, source pins, and host build versions."
+          } >>"$GITHUB_STEP_SUMMARY"

@@ -15,6 +15,9 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-bitwarden-simplelogin-lab}"
 compose_file="$script_dir/compose.yml"
 compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" --file "$compose_file")
 official_remote="https://github.com/simple-login/app.git"
+node_image="node:10.17.0-alpine@sha256:b930ae34213b9bcda4ab598d16159cc2acfd5b26342eff536807d99106f4dd84"
+ubuntu_image="ubuntu:22.04@sha256:0199853f6d6b20b0424f3c5694a72a62764f01e6a771b1eb48a4197848986c7e"
+export SIMPLELOGIN_DOCKERFILE="${SIMPLELOGIN_DOCKERFILE:-${TMPDIR:-/tmp}/bitwarden-simplelogin-${simplelogin_commit}.Dockerfile}"
 
 validate_configuration() {
   [[ "$simplelogin_commit" =~ ^[0-9a-f]{40}$ ]] || {
@@ -86,6 +89,22 @@ ensure_source() {
   [[ "$(git -C "$SIMPLELOGIN_APP_DIR" rev-parse HEAD)" == "$simplelogin_commit" ]]
 }
 
+prepare_pinned_dockerfile() {
+  local upstream_dockerfile="$SIMPLELOGIN_APP_DIR/Dockerfile"
+  [[ "$(grep -c '^FROM node:10\.17\.0-alpine AS npm$' "$upstream_dockerfile")" == "1" ]] || {
+    printf 'pinned SimpleLogin Dockerfile no longer matches its Node base image\n' >&2
+    exit 1
+  }
+  [[ "$(grep -c '^FROM --platform=linux/amd64 ubuntu:22\.04$' "$upstream_dockerfile")" == "1" ]] || {
+    printf 'pinned SimpleLogin Dockerfile no longer matches its Ubuntu base image\n' >&2
+    exit 1
+  }
+  sed \
+    -e "s|^FROM node:10.17.0-alpine AS npm$|FROM ${node_image} AS npm|" \
+    -e "s|^FROM --platform=linux/amd64 ubuntu:22.04$|FROM --platform=linux/amd64 ${ubuntu_image}|" \
+    "$upstream_dockerfile" >"$SIMPLELOGIN_DOCKERFILE"
+}
+
 wait_for_url() {
   local url="$1"
   local attempts="${2:-90}"
@@ -130,6 +149,7 @@ provision() {
   local with_mail="${1:-0}"
   ensure_docker
   ensure_source
+  prepare_pinned_dockerfile
   require_command curl
   require_command python3
 
@@ -227,8 +247,9 @@ show_provenance() {
   ensure_docker
   ensure_source
   local image_tag="bitwarden-simplelogin-lab:${simplelogin_commit}"
-  printf 'upstream: %s\ncommit: %s\nimage: %s\n' \
-    "$official_remote" "$simplelogin_commit" "$image_tag"
+  prepare_pinned_dockerfile
+  printf 'upstream: %s\ncommit: %s\nimage: %s\nnode base: %s\nubuntu base: %s\n' \
+    "$official_remote" "$simplelogin_commit" "$image_tag" "$node_image" "$ubuntu_image"
   local image_id
   if image_id="$(docker image inspect --format '{{.Id}}' "$image_tag" 2>/dev/null)"; then
     printf 'local image id: %s\n' "$image_id"

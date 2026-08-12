@@ -39,4 +39,3 @@ object AliasReleaseConsumer {
         return parseAliasReference(encoded).connectionId == connectionId
     }
 }
-

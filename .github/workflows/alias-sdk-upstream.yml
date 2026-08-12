@@ -1,0 +1,250 @@
+name: Alias SDK upstream drift
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk-upstream-ref:
+        description: Canonical bitwarden/sdk-internal ref to inspect
+        type: string
+        default: main
+        required: true
+      clients-ref:
+        description: Canonical bitwarden/clients ref to inspect
+        type: string
+        default: main
+        required: true
+  schedule:
+    - cron: "37 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alias-sdk-upstream-drift
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compatibility:
+    name: Canonical drift and compatibility report
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout alias branch with full history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: alias-upstream-drift
+
+      - name: Resolve public upstream refs without changing remotes
+        id: fetch
+        env:
+          CLIENTS_REF: ${{ inputs.clients-ref || 'main' }}
+          SDK_REF: ${{ inputs.sdk-upstream-ref || 'main' }}
+        run: |
+          branch_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags https://github.com/bitwarden/sdk-internal.git "$SDK_REF"
+          sdk_sha="$(git rev-parse FETCH_HEAD)"
+          git update-ref refs/alias-drift/sdk "$sdk_sha"
+
+          clients_dir="$RUNNER_TEMP/bitwarden-clients"
+          mkdir -p "$clients_dir"
+          if [[ "$CLIENTS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            clients_sha="$CLIENTS_REF"
+          else
+            clients_sha="$(git ls-remote https://github.com/bitwarden/clients.git \
+              "refs/heads/$CLIENTS_REF" "refs/tags/$CLIENTS_REF^{}" \
+              | awk 'NR == 1 {print $1}')"
+          fi
+          [[ "$clients_sha" =~ ^[0-9a-f]{40}$ ]]
+          for clients_file in package.json tsconfig.base.json; do
+            curl --fail --location --silent --show-error \
+              "https://raw.githubusercontent.com/bitwarden/clients/$clients_sha/$clients_file" \
+              --output "$clients_dir/$clients_file"
+          done
+
+          {
+            echo "branch_sha=$branch_sha"
+            echo "sdk_sha=$sdk_sha"
+            echo "clients_sha=$clients_sha"
+            echo "clients_dir=$clients_dir"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Classify relevant upstream changes
+        id: classify
+        continue-on-error: true
+        run: |
+          scripts/alias-sdk/classify-upstream-changes.sh \
+            "$(cat support/alias-sdk-release/UPSTREAM_BASE)" \
+            "${{ steps.fetch.outputs.sdk_sha }}" \
+            "$RUNNER_TEMP/alias-upstream-report.md"
+
+      - name: Check bitwarden-clients compiler contract
+        id: clients
+        continue-on-error: true
+        run: |
+          scripts/alias-sdk/check-clients-contract.mjs \
+            support/alias-sdk-release/consumers/typescript/bitwarden-clients-contract.json \
+            "${{ steps.fetch.outputs.clients_dir }}"
+
+      - name: Check merge compatibility without merging a branch
+        id: merge
+        continue-on-error: true
+        run: scripts/alias-sdk/check-upstream-merge.sh "${{ steps.fetch.outputs.sdk_sha }}"
+
+      - name: Create an ephemeral merge commit for tests
+        id: synthetic
+        if: steps.merge.outcome == 'success'
+        env:
+          BRANCH_SHA: ${{ steps.fetch.outputs.branch_sha }}
+          MERGE_TREE: ${{ steps.merge.outputs.merge_tree }}
+          SDK_SHA: ${{ steps.fetch.outputs.sdk_sha }}
+        run: |
+          export GIT_AUTHOR_NAME="Alias SDK drift gate"
+          export GIT_AUTHOR_EMAIL="alias-sdk-drift@invalid.example"
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          synthetic_sha="$(printf 'Test alias patch stack against canonical SDK %s\n' "$SDK_SHA" \
+            | git commit-tree "$MERGE_TREE" -p "$BRANCH_SHA" -p "$SDK_SHA")"
+          git switch --detach "$synthetic_sha"
+          echo "synthetic_sha=$synthetic_sha" >>"$GITHUB_OUTPUT"
+          test -z "$(git status --porcelain)"
+
+      - name: Verify pinned external test sources
+        id: pins
+        if: steps.synthetic.outcome == 'success'
+        continue-on-error: true
+        run: scripts/alias-sdk/check-external-pins.sh
+
+      - name: Install checksum-pinned Gitleaks
+        id: gitleaks-install
+        if: steps.synthetic.outcome == 'success'
+        continue-on-error: true
+        run: scripts/alias-sdk/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
+
+      - name: Scan merged history for secrets
+        id: secrets
+        if: steps.gitleaks-install.outcome == 'success'
+        continue-on-error: true
+        env:
+          GITLEAKS_BASE_REF: ${{ steps.merge.outputs.upstream_base }}
+          GITLEAKS_BIN: ${{ runner.temp }}/gitleaks/gitleaks
+          GITLEAKS_HEAD_REF: ${{ steps.fetch.outputs.branch_sha }}
+        run: scripts/alias-sdk/scan-secrets.sh
+
+      - name: Run alias compatibility and security suite
+        id: contracts
+        if: steps.synthetic.outcome == 'success'
+        continue-on-error: true
+        run: |
+          scripts/check-oss-artifact-boundary.sh
+          cargo test --locked --package bitwarden-alias --all-features
+          cargo test --locked --package bitwarden-generators --all-features
+          cargo test --locked --package bitwarden-uniffi
+
+      - name: Run pinned SimpleLogin lifecycle
+        id: simplelogin
+        if: steps.synthetic.outcome == 'success'
+        continue-on-error: true
+        run: support/simplelogin/lab.sh test
+
+      - name: Clean up SimpleLogin lab
+        if: always()
+        run: support/simplelogin/lab.sh down || true
+
+      - name: Complete actionable report
+        if: always()
+        env:
+          BRANCH_SHA: ${{ steps.fetch.outputs.branch_sha }}
+          CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}
+          CLIENTS_OUTCOME: ${{ steps.clients.outcome }}
+          CLIENTS_SHA: ${{ steps.fetch.outputs.clients_sha }}
+          CONTRACTS_OUTCOME: ${{ steps.contracts.outcome }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+          PINS_OUTCOME: ${{ steps.pins.outcome }}
+          SDK_SHA: ${{ steps.fetch.outputs.sdk_sha }}
+          SECRETS_OUTCOME: ${{ steps.secrets.outcome }}
+          SIMPLELOGIN_OUTCOME: ${{ steps.simplelogin.outcome }}
+          SYNTHETIC_SHA: ${{ steps.synthetic.outputs.synthetic_sha }}
+        run: |
+          report="$RUNNER_TEMP/alias-upstream-report.md"
+          if [[ ! -f "$report" ]]; then
+            printf '# Alias SDK upstream drift report\n\nClassification failed before a report was created.\n' >"$report"
+          fi
+          {
+            echo
+            echo "## Exact test ancestry"
+            echo
+            echo "- Alias branch: \`$BRANCH_SHA\`"
+            echo "- Canonical SDK: \`$SDK_SHA\`"
+            echo "- Synthetic merge commit: \`${SYNTHETIC_SHA:-not-created}\`"
+            echo "- bitwarden/clients: \`$CLIENTS_SHA\`"
+            echo "- SimpleLogin: \`$(cat support/simplelogin/SIMPLELOGIN_COMMIT)\`"
+            echo
+            echo "## Gate outcomes"
+            echo
+            echo "| Gate | Outcome | Action on failure |"
+            echo "| --- | --- | --- |"
+            echo "| Drift classification | $CLASSIFY_OUTCOME | Review classifier syntax and fetched ancestry. |"
+            echo "| SDK merge tree | $MERGE_OUTCOME | Rebase or resolve conflicts locally; this workflow never merges. |"
+            echo "| External pins | $PINS_OUTCOME | Pin the named source by full SHA, digest, version, or checksum. |"
+            echo "| Secret scan | $SECRETS_OUTCOME | Rotate a real secret, then remove it from reachable history. |"
+            echo "| Rust compatibility/security | $CONTRACTS_OUTCOME | Reproduce against the exact SDK SHA above and fix the patch stack. |"
+            echo "| bitwarden/clients compiler contract | $CLIENTS_OUTCOME | Update the pinned fixture contract and lockfile together. |"
+            echo "| SimpleLogin lifecycle | $SIMPLELOGIN_OUTCOME | Re-run the pinned lab command and inspect container logs. |"
+            echo
+            echo "## Host evidence"
+            echo
+            echo '```text'
+            rustc --version
+            cargo --version
+            node --version
+            docker --version
+            docker compose version
+            echo "runner=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo '```'
+          } >>"$report"
+          cat "$report" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-upstream-report-${{ steps.fetch.outputs.sdk_sha }}
+          path: ${{ runner.temp }}/alias-upstream-report.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce all drift gates
+        if: always()
+        env:
+          CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}
+          CLIENTS_OUTCOME: ${{ steps.clients.outcome }}
+          CONTRACTS_OUTCOME: ${{ steps.contracts.outcome }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+          PINS_OUTCOME: ${{ steps.pins.outcome }}
+          SECRETS_OUTCOME: ${{ steps.secrets.outcome }}
+          SIMPLELOGIN_OUTCOME: ${{ steps.simplelogin.outcome }}
+          SYNTHETIC_OUTCOME: ${{ steps.synthetic.outcome }}
+        run: |
+          for outcome in \
+            "$CLASSIFY_OUTCOME" "$CLIENTS_OUTCOME" "$MERGE_OUTCOME" "$SYNTHETIC_OUTCOME" \
+            "$PINS_OUTCOME" "$SECRETS_OUTCOME" "$CONTRACTS_OUTCOME" "$SIMPLELOGIN_OUTCOME"; do
+            [[ "$outcome" == "success" ]] || exit 1
+          done
