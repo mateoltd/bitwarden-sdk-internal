@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.library")
+    id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
@@ -8,6 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
+        applicationId = "com.bitwarden.aliasconsumer"
         minSdk = 28
     }
 
