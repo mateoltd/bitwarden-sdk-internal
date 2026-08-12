@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "subject": "public-alias-end-to-end-security-assurance",
+  "evaluation": {},
+  "scope": {
+    "requiredOperations": [
+      "create",
+      "persist",
+      "sync",
+      "autofill",
+      "send-reply",
+      "reconcile",
+      "revoke",
+      "backup-restore",
+      "provider-replacement"
+    ],
+    "excluded": [
+      "personal-migration",
+      "domains",
+      "provider-branding",
+      "secret-material"
+    ],
+    "mathematicalScope": "not-a-full-socio-technical-proof"
+  },
+  "assumptions": [
+    {
+      "id": "A-FIXTURE",
+      "statement": "A fixture dependency remains outside the proof boundary.",
+      "proofStatus": "not-mathematically-proven"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "EV-FIXTURE",
+      "type": "test",
+      "path": "evidence.txt",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "anchors": ["fixture evidence"]
+    }
+  ],
+  "claims": [
+    {
+      "id": "C-E2E-01",
+      "status": "assumption-bound",
+      "statement": "The fixture claim points at intentionally stale evidence.",
+      "operations": [
+        "create",
+        "persist",
+        "sync",
+        "autofill",
+        "send-reply",
+        "reconcile",
+        "revoke",
+        "backup-restore",
+        "provider-replacement"
+      ],
+      "assumptions": ["A-FIXTURE"],
+      "evidence": ["EV-FIXTURE"]
+    }
+  ],
+  "graph": {
+    "rootClaim": "C-E2E-01",
+    "edges": [
+      {
+        "from": "C-E2E-01",
+        "to": "A-FIXTURE",
+        "relation": "boundedBy"
+      }
+    ]
+  }
+}

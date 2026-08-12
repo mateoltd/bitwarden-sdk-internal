@@ -13,6 +13,7 @@ on:
       - "crates/bitwarden-generators/**"
       - "crates/bitwarden-uniffi/**"
       - "crates/bitwarden-wasm-internal/**"
+      - "docs/alias-security-assurance/**"
       - "formal/alias-security/**"
       - "package-lock.json"
       - "package.json"

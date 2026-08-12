@@ -4,6 +4,11 @@ This directory contains the normative alias [security contract](SECURITY-CONTRAC
 transition systems, the [proof inventory and gap matrix](PROOF-COVERAGE.md), and canonical
 cross-language conformance vectors.
 
+The compositional [end-to-end assurance case](../../docs/alias-security-assurance/README.md) places
+this finite-state evidence inside the larger client, vault, provider, mail, and operational trust
+boundaries. Its machine-readable traceability manifest deliberately distinguishes checked claims
+from assumptions and known gaps.
+
 Run the consolidated machine-checked contract with:
 
 ```bash

@@ -1,0 +1,687 @@
+{
+  "schemaVersion": 1,
+  "subject": "public-alias-end-to-end-security-assurance",
+  "evaluation": {
+    "auditDate": "2026-08-13",
+    "baseRefAtAudit": "origin/integration/alias-platform",
+    "baseCommit": "ff60528b2f899baec1cea72fd8efbdc509fbab4e",
+    "developmentBranch": "docs/end-to-end-security-assurance",
+    "providerPin": {
+      "path": "support/simplelogin/SIMPLELOGIN_COMMIT",
+      "commit": "dbc45fcce4e8e6b4fa615cc729ca95a67bf75266"
+    },
+    "sourceBranches": [
+      {
+        "name": "origin/feat/alias-core",
+        "commit": "00a534cad1698dd7e2e52536a2f8630676511ae3",
+        "area": "rust-lifecycle-and-transport"
+      },
+      {
+        "name": "origin/feat/alias-reconciliation",
+        "commit": "778f27664c5ee218ca1e6dfed422517272713576",
+        "area": "vault-reconciliation"
+      },
+      {
+        "name": "origin/feat/alias-bindings",
+        "commit": "adfbac3886e3f03197ff58afbec78ad799908b45",
+        "area": "wasm-and-uniffi-bindings"
+      },
+      {
+        "name": "origin/test/alias-security",
+        "commit": "45d88e9a83c0357f8b7aa2d3c2a8004544b5ea3c",
+        "area": "adversarial-provider-tests"
+      },
+      {
+        "name": "origin/test/simplelogin-integration-lab",
+        "commit": "2466f628fbebe2f2449a2ebb9ac9febefc8d2479",
+        "area": "owned-provider-and-mail-edge"
+      },
+      {
+        "name": "origin/audit/alias-first-class-security",
+        "commit": "cf95cf4b1238519f8cfd6e22e1f8ea948f205642",
+        "area": "security-and-artifact-boundary"
+      },
+      {
+        "name": "origin/integration/alias-secure-connection",
+        "commit": "8e7a52bcb4ca52eba28f0cc7ec574d784abc0fc7",
+        "area": "stable-provider-account-identity"
+      },
+      {
+        "name": "origin/security/alias-formal-model",
+        "commit": "51d294fa38fac3dc984553660f3719f74972b40d",
+        "area": "tla-and-conformance"
+      },
+      {
+        "name": "origin/build/alias-sdk-release-lane",
+        "commit": "b4564cb4b8b4c9882fb188de64e962e3faf6c438",
+        "area": "release-and-clean-consumers"
+      },
+      {
+        "name": "origin/integration/alias-platform",
+        "commit": "ff60528b2f899baec1cea72fd8efbdc509fbab4e",
+        "area": "evaluated-integration"
+      }
+    ]
+  },
+  "scope": {
+    "requiredOperations": [
+      "create",
+      "persist",
+      "sync",
+      "autofill",
+      "send-reply",
+      "reconcile",
+      "revoke",
+      "backup-restore",
+      "provider-replacement"
+    ],
+    "excluded": [
+      "personal-migration",
+      "domains",
+      "provider-branding",
+      "secret-material"
+    ],
+    "mathematicalScope": "not-a-full-socio-technical-proof"
+  },
+  "assumptions": [
+    {
+      "id": "A-CLIENT-IDENTITY",
+      "statement": "The client generates and persists one random canonical UUID v4 per provider account, never derives it from a credential, and allocates a new value for a replacement account.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-CLIENT-INTEGRATION",
+      "statement": "The client uses the SDK reference APIs, does not infer bindings from addresses, and reconciles rather than blindly replaying an unknown mutation outcome.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-VAULT-CRYPTO",
+      "statement": "Vault encryption, key handling, authentication, and decrypted-memory controls protect the complete cipher and hidden alias reference.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-SYNC-PERSISTENCE",
+      "statement": "The client atomically encrypts and persists returned ciphers, applies an appropriate sync conflict policy, and supplies a complete provider inventory when completeness-dependent results are used.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-AUTOFILL",
+      "statement": "The client applies its normal origin and user-intent checks to login.username and never displays or autofills the hidden reference payload.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-PROVIDER",
+      "statement": "The authenticated provider account owns the stable IDs, enforces authorization, keeps IDs stable and non-zero, and returns truthful fresh reads.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-TRANSPORT",
+      "statement": "TLS, PKI, DNS, the host runtime, and the configured provider origin are trustworthy beyond the checked redirect and URL-shape controls.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-MAIL-EDGE",
+      "statement": "The owned provider, mailbox, DNS, and downstream mail systems apply the intended routing and retention policy; content confidentiality and authenticity require separate controls.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-BACKUP",
+      "statement": "Product export, backup, import, and restore preserve the hidden field and protect backup material according to whether it is plaintext or encrypted.",
+      "proofStatus": "not-mathematically-proven"
+    },
+    {
+      "id": "A-ARTIFACT",
+      "statement": "Consumers verify source and artifact provenance and do not substitute bindings or an unhardened feature configuration.",
+      "proofStatus": "not-mathematically-proven"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "EV-ASSURANCE-ARGUMENT",
+      "type": "operational",
+      "path": "docs/alias-security-assurance/README.md",
+      "sha256": "80ce623e27b3d11c9ae5ad40843c669c492704568a6c1346591eb31cc3eeedd4",
+      "anchors": [
+        "## Claim-evidence-argument graph",
+        "This is not a claim that the"
+      ]
+    },
+    {
+      "id": "EV-SECURITY-CONTRACT",
+      "type": "operational",
+      "path": "formal/alias-security/SECURITY-CONTRACT.md",
+      "sha256": "e250b023f6fbfc79a65232d14cf2b0927bfcf23c428fa055a902d982ee7d24ab",
+      "anchors": [
+        "## Assets and trust boundaries",
+        "**REPLAY-1 Response handling.**"
+      ]
+    },
+    {
+      "id": "EV-PROOF-INVENTORY",
+      "type": "proof",
+      "path": "formal/alias-security/PROOF-COVERAGE.md",
+      "sha256": "46636f3ada710f7702fc002b97b6608dc2734e9bae582b0a386f8f8399fef089",
+      "anchors": [
+        "## Machine-checked theorem inventory",
+        "## Checked abstraction and unproved boundaries"
+      ]
+    },
+    {
+      "id": "EV-TLA-VAULT",
+      "type": "proof",
+      "path": "formal/alias-security/AliasVault.tla",
+      "sha256": "5728d1f574fca326b2433d1d618100bdde61f7439daf95fc37f29f6137c648ff",
+      "anchors": [
+        "AuthorizedWrites ==",
+        "CredentialNonDisclosure =="
+      ]
+    },
+    {
+      "id": "EV-TLA-LIFECYCLE",
+      "type": "proof",
+      "path": "formal/alias-security/AliasLifecycle.tla",
+      "sha256": "7013251031a945ba86479eb121b0ef7526580f679d0ebcf31fb633e3973aaf1f",
+      "anchors": [
+        "UnknownOutcomeNotReplayed ==",
+        "AuthorizedSetConverges =="
+      ]
+    },
+    {
+      "id": "EV-CONFORMANCE-VECTORS",
+      "type": "test",
+      "path": "formal/alias-security/conformance-vectors.json",
+      "sha256": "08fd6511a642339a63a28cfe66e216521ef68e8f5ad7fa8409856066f1625fea",
+      "anchors": [
+        "\"referenceSchema\": {",
+        "\"lifecycleTraces\": ["
+      ]
+    },
+    {
+      "id": "EV-RUST-CLIENT",
+      "type": "operational",
+      "path": "crates/bitwarden-alias/src/client.rs",
+      "sha256": "2a2f0035dee4ab1ee3d23e3676661e348b174ef18ae1d783acffed9f39e16b46",
+      "anchors": [
+        "pub async fn set_alias_enabled(",
+        "init.set_credentials(web_sys::RequestCredentials::Omit);"
+      ]
+    },
+    {
+      "id": "EV-RUST-RECONCILIATION",
+      "type": "operational",
+      "path": "crates/bitwarden-alias/src/reconciliation.rs",
+      "sha256": "51bd7dbaf4d4c9ec80c6ae11fd6ec76e6f08730117674c95a2e96be3171c5a19",
+      "anchors": [
+        "pub fn apply_alias_reconciliation(",
+        "fn validate_connection_id("
+      ]
+    },
+    {
+      "id": "EV-RUST-CLIENT-TESTS",
+      "type": "test",
+      "path": "crates/bitwarden-alias/src/tests.rs",
+      "sha256": "45d945ce33345069415f8e9d2f3d70fb16f88eaf50dfd9fd2d34985de527f738",
+      "anchors": [
+        "mutation_transport_failures_report_an_unknown_outcome_without_replay",
+        "rejects_authenticated_redirects_without_contacting_destination"
+      ]
+    },
+    {
+      "id": "EV-RUST-CONFORMANCE",
+      "type": "test",
+      "path": "crates/bitwarden-alias/tests/security_conformance.rs",
+      "sha256": "97f1d8770216290a4bccdbbf293a1a8b986d99e651e7ad4fb89286efefb6ee45",
+      "anchors": [
+        "production_reference_schema_refines_the_formal_contract",
+        "production_delete_refines_non_destructive_and_no_replay_semantics"
+      ]
+    },
+    {
+      "id": "EV-RECONCILIATION-LIVE",
+      "type": "test",
+      "path": "crates/bitwarden-alias/tests/reconciliation_live.rs",
+      "sha256": "e339c42e8899460c806f39d26b77d1adb7307cd7414fe6b9f9431fa59584f182",
+      "anchors": [
+        "let serialized = serde_json::to_vec",
+        "duplicate bindings should be reported"
+      ]
+    },
+    {
+      "id": "EV-WASM-BINDING",
+      "type": "operational",
+      "path": "crates/bitwarden-wasm-internal/src/alias.rs",
+      "sha256": "efb209e2b257c77070c3038abfbdbf28f1dc283053bf5d3744ca91a975c025b1",
+      "anchors": [
+        "core_apply_alias_reconciliation",
+        "self.0.disable_alias(alias_id).await"
+      ]
+    },
+    {
+      "id": "EV-UNIFFI-BINDING",
+      "type": "operational",
+      "path": "crates/bitwarden-uniffi/src/alias.rs",
+      "sha256": "18ce56d2bdfc939ef408ece1925d7ff56850a2c8735f78e924d960bd7dc0a9c8",
+      "anchors": [
+        "core_apply_alias_reconciliation",
+        "self.0.disable_alias(alias_id).await"
+      ]
+    },
+    {
+      "id": "EV-WASM-ADVERSARIAL",
+      "type": "test",
+      "path": "crates/bitwarden-wasm-internal/integration-tests/tests/alias/adversarial.test.ts",
+      "sha256": "82e4487261f347439e4fe506848b5b209e7b43f943676ed964e62efd6683e4be",
+      "anchors": [
+        "rejects authenticated redirects without replaying or leaking credentials",
+        "executes the replayed-response formal trace across the WASM boundary"
+      ]
+    },
+    {
+      "id": "EV-WASM-REFERENCE",
+      "type": "test",
+      "path": "crates/bitwarden-wasm-internal/integration-tests/tests/alias/reference.test.ts",
+      "sha256": "cd2754ba606dd28aa92e90dae5305eca97a008432c65f147b1f576415396a5a2",
+      "anchors": [
+        "isolates overlapping provider IDs for two accounts on one origin",
+        "does not infer a binding from an address without a current reference"
+      ]
+    },
+    {
+      "id": "EV-UNIFFI-KOTLIN",
+      "type": "test",
+      "path": "crates/bitwarden-uniffi/binding-integration-tests/kotlin/AliasReferenceConsumer.kt",
+      "sha256": "c9dfdaa33cf8c768a55319e46195c1f85b7ef5c77d8635ef2c274021b81b3b0a",
+      "anchors": [
+        "fun main() {",
+        "Kotlin alias reference consumer passed"
+      ]
+    },
+    {
+      "id": "EV-UNIFFI-SWIFT",
+      "type": "test",
+      "path": "crates/bitwarden-uniffi/binding-integration-tests/swift/AliasReferenceConsumer.swift",
+      "sha256": "29a0e1f2f9c18338ac922d0c92e6f41963355f8b2c7ca998aabd2d503aeb11cb",
+      "anchors": [
+        "static func main() throws {",
+        "Swift alias reference consumer passed"
+      ]
+    },
+    {
+      "id": "EV-OWNED-PROVIDER-LAB",
+      "type": "operational",
+      "path": "support/simplelogin/README.md",
+      "sha256": "cd04eb5101bf8860c49cfe39d9c6931eebf16f55febb0d0e21f4b4de58156bb8",
+      "anchors": [
+        "# Real SimpleLogin integration lab",
+        "real SMTP forwarding and reverse-alias reply delivery"
+      ]
+    },
+    {
+      "id": "EV-OWNED-LIFECYCLE",
+      "type": "test",
+      "path": "support/simplelogin/lifecycle.sh",
+      "sha256": "50fafcbd4235089c9372458c4c59dfe2e40f294242e628f0a28a456e2305388d",
+      "anchors": [
+        "database did not persist the SDK create operation",
+        "mail lifecycle updates API statistics"
+      ]
+    },
+    {
+      "id": "EV-MAIL-LIFECYCLE",
+      "type": "test",
+      "path": "support/simplelogin/mail_lifecycle.py",
+      "sha256": "a57e981c72ddad3e760c9dee45e862f1b4c65efea8183bb183842e9c4768d118",
+      "anchors": [
+        "send(CONTACT, ALIAS, forward_subject",
+        "send(MAILBOX, REVERSE_ALIAS, reply_subject"
+      ]
+    },
+    {
+      "id": "EV-PROVIDER-PIN",
+      "type": "operational",
+      "path": "support/simplelogin/SIMPLELOGIN_COMMIT",
+      "sha256": "7cda536cf57256995132b2baa7aa8bbd234fc06cd581572b4c845cd2a422ecfc",
+      "anchors": ["dbc45fcce4e8e6b4fa615cc729ca95a67bf75266"]
+    },
+    {
+      "id": "EV-CLIENT-INTEGRATION",
+      "type": "operational",
+      "path": "support/alias-sdk-release/client-integration.json",
+      "sha256": "cf5792de46a107f58f2f5784a855da12eb044b27494b908a3b21e209fe18de05",
+      "anchors": [
+        "\"current-reference-schema\"",
+        "\"verify-source-and-artifact\""
+      ]
+    },
+    {
+      "id": "EV-RELEASE-WORKFLOW",
+      "type": "operational",
+      "path": ".github/workflows/alias-sdk-release.yml",
+      "sha256": "9d062a44c97bb770524140ce06490935f95f1b8205b02fbde376ec2064ddcac4",
+      "anchors": [
+        "Test authoritative alias security contract",
+        "Create release manifest"
+      ]
+    },
+    {
+      "id": "EV-ARTIFACT-BOUNDARY",
+      "type": "test",
+      "path": "scripts/check-oss-artifact-boundary.sh",
+      "sha256": "ce91249f32991f286c11b5e95810c3e40898d033131ad62a5bffb84567311db0",
+      "anchors": [
+        "check_hardened_alias_generator bitwarden-wasm-internal",
+        "check_hardened_alias_generator bitwarden-uniffi"
+      ]
+    },
+    {
+      "id": "EV-HARDENED-GENERATOR",
+      "type": "operational",
+      "path": "crates/bitwarden-generators/src/username_forwarders/simplelogin.rs",
+      "sha256": "1c5c1205c14bdf6251d23f61312fba89414f88a11c4ffd83e86f977d75544cf9",
+      "anchors": [
+        "pub(crate) async fn generate_alias(",
+        ".create_random_alias(CreateRandomAliasRequest {"
+      ]
+    },
+    {
+      "id": "EV-TRACE-VALIDATOR",
+      "type": "test",
+      "path": "scripts/alias-sdk/validate_security_assurance.py",
+      "sha256": "d4494a0e47e634fdab30892879a5a4adeadae59170404bc6cc8bbf084be6ddc4",
+      "anchors": [
+        "evidence is stale",
+        "has no proof, test, or operational evidence"
+      ]
+    },
+    {
+      "id": "EV-TRACE-VALIDATOR-TESTS",
+      "type": "test",
+      "path": "scripts/alias-sdk/test_validate_security_assurance.py",
+      "sha256": "55b6fb0d71ea4636f9a28464b7bf3b5645d8b8f56e05712f6faef1ad53a2761b",
+      "anchors": [
+        "test_missing_claim_evidence_fails",
+        "test_stale_evidence_fails"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "C-E2E-01",
+      "status": "assumption-bound",
+      "statement": "The supported stage claims compose into bounded end-to-end assurance only while every stated client, vault, provider, transport, mail, backup, and artifact boundary holds.",
+      "operations": [
+        "create",
+        "persist",
+        "sync",
+        "autofill",
+        "send-reply",
+        "reconcile",
+        "revoke",
+        "backup-restore",
+        "provider-replacement"
+      ],
+      "assumptions": ["A-CLIENT-INTEGRATION"],
+      "evidence": [
+        "EV-ASSURANCE-ARGUMENT",
+        "EV-PROOF-INVENTORY",
+        "EV-RELEASE-WORKFLOW",
+        "EV-TRACE-VALIDATOR",
+        "EV-TRACE-VALIDATOR-TESTS"
+      ]
+    },
+    {
+      "id": "C-ID-01",
+      "status": "supported",
+      "statement": "Provider, canonical instance, connection UUID, and provider alias ID scope reference and mutation identity; the address snapshot cannot authorize a mutation.",
+      "operations": ["create", "persist", "sync", "reconcile", "revoke", "provider-replacement"],
+      "assumptions": ["A-CLIENT-IDENTITY", "A-PROVIDER"],
+      "evidence": [
+        "EV-SECURITY-CONTRACT",
+        "EV-TLA-VAULT",
+        "EV-CONFORMANCE-VECTORS",
+        "EV-RUST-RECONCILIATION",
+        "EV-RUST-CONFORMANCE"
+      ]
+    },
+    {
+      "id": "C-TRANSPORT-01",
+      "status": "supported",
+      "statement": "The provider API boundary rejects authenticated redirects and automatic replay, bounds responses, sanitizes errors, and turns post-dispatch transport loss into an unknown mutation outcome.",
+      "operations": ["create", "send-reply", "revoke"],
+      "assumptions": ["A-TRANSPORT", "A-PROVIDER"],
+      "evidence": ["EV-RUST-CLIENT", "EV-RUST-CLIENT-TESTS", "EV-WASM-ADVERSARIAL"]
+    },
+    {
+      "id": "C-SECRET-01",
+      "status": "supported",
+      "statement": "Canonical references contain exactly six non-credential fields, reject unknown fields, and are handled by non-echoing error paths; this is not a process-wide noninterference theorem.",
+      "operations": ["create", "persist", "sync", "backup-restore"],
+      "assumptions": ["A-VAULT-CRYPTO", "A-ARTIFACT"],
+      "evidence": [
+        "EV-SECURITY-CONTRACT",
+        "EV-TLA-VAULT",
+        "EV-CONFORMANCE-VECTORS",
+        "EV-RUST-CLIENT-TESTS"
+      ]
+    },
+    {
+      "id": "C-BINDINGS-01",
+      "status": "supported",
+      "statement": "WASM and UniFFI alias surfaces delegate reference, reconciliation, and lifecycle behavior to the Rust core and exercise shared reference behavior across languages.",
+      "operations": ["create", "persist", "sync", "reconcile", "revoke"],
+      "assumptions": ["A-CLIENT-INTEGRATION", "A-ARTIFACT"],
+      "evidence": [
+        "EV-WASM-BINDING",
+        "EV-UNIFFI-BINDING",
+        "EV-WASM-ADVERSARIAL",
+        "EV-WASM-REFERENCE",
+        "EV-UNIFFI-KOTLIN",
+        "EV-UNIFFI-SWIFT"
+      ]
+    },
+    {
+      "id": "C-RELEASE-01",
+      "status": "assumption-bound",
+      "statement": "The candidate lane checks source and package provenance, the hardened generator feature path, generated consumers, and disallowed artifact surfaces before handoff.",
+      "operations": ["create", "persist", "sync", "autofill", "send-reply", "reconcile", "revoke", "backup-restore", "provider-replacement"],
+      "assumptions": ["A-ARTIFACT"],
+      "evidence": [
+        "EV-RELEASE-WORKFLOW",
+        "EV-ARTIFACT-BOUNDARY",
+        "EV-HARDENED-GENERATOR",
+        "EV-CLIENT-INTEGRATION"
+      ]
+    },
+    {
+      "id": "C-CREATE-01",
+      "status": "supported",
+      "statement": "Create validates inputs and returned stable identity, dispatches once, and reports ambiguous completion instead of automatically replaying a non-idempotent request.",
+      "operations": ["create"],
+      "assumptions": ["A-CLIENT-INTEGRATION", "A-PROVIDER", "A-TRANSPORT"],
+      "evidence": [
+        "EV-RUST-CLIENT",
+        "EV-RUST-CLIENT-TESTS",
+        "EV-OWNED-LIFECYCLE",
+        "EV-HARDENED-GENERATOR"
+      ]
+    },
+    {
+      "id": "C-PERSIST-01",
+      "status": "assumption-bound",
+      "statement": "Binding changes only login.username and one validated hidden reference in a decrypted login; encryption and durable atomic commit belong to the client and vault.",
+      "operations": ["persist"],
+      "assumptions": ["A-CLIENT-INTEGRATION", "A-VAULT-CRYPTO", "A-SYNC-PERSISTENCE"],
+      "evidence": ["EV-RUST-RECONCILIATION", "EV-WASM-REFERENCE", "EV-RECONCILIATION-LIVE"]
+    },
+    {
+      "id": "C-SYNC-01",
+      "status": "assumption-bound",
+      "statement": "A synced current reference can be strictly parsed and safely reconciled, but the alias crate does not implement server merge, transaction, or rollback policy.",
+      "operations": ["sync"],
+      "assumptions": ["A-CLIENT-INTEGRATION", "A-VAULT-CRYPTO", "A-SYNC-PERSISTENCE"],
+      "evidence": ["EV-RUST-RECONCILIATION", "EV-RUST-CONFORMANCE", "EV-WASM-REFERENCE"]
+    },
+    {
+      "id": "C-AUTOFILL-01",
+      "status": "assumption-bound",
+      "statement": "The validated alias address is placed in login.username while identity metadata remains hidden; origin matching and autofill authorization remain client responsibilities.",
+      "operations": ["autofill"],
+      "assumptions": ["A-CLIENT-INTEGRATION", "A-AUTOFILL"],
+      "evidence": ["EV-RUST-RECONCILIATION", "EV-WASM-REFERENCE", "EV-CLIENT-INTEGRATION"]
+    },
+    {
+      "id": "C-SEND-REPLY-01",
+      "status": "assumption-bound",
+      "statement": "Reverse-alias inputs and responses are validated, and the pinned owned-provider lab observes one forward and one reply with persisted activity; this supports routing behavior only.",
+      "operations": ["send-reply"],
+      "assumptions": ["A-PROVIDER", "A-TRANSPORT", "A-MAIL-EDGE"],
+      "evidence": [
+        "EV-RUST-CLIENT",
+        "EV-OWNED-PROVIDER-LAB",
+        "EV-OWNED-LIFECYCLE",
+        "EV-MAIL-LIFECYCLE"
+      ]
+    },
+    {
+      "id": "C-MAIL-EDGE-01",
+      "status": "assumption-bound",
+      "statement": "Mail forwarding and reverse replies cross a trusted operational provider and mail boundary; no end-to-end content confidentiality, authenticity, anti-abuse, or availability claim is made.",
+      "operations": ["send-reply"],
+      "assumptions": ["A-MAIL-EDGE"],
+      "evidence": ["EV-OWNED-PROVIDER-LAB", "EV-MAIL-LIFECYCLE", "EV-PROVIDER-PIN"]
+    },
+    {
+      "id": "C-RECONCILE-01",
+      "status": "supported",
+      "statement": "Reconciliation is a deterministic dry run followed by prevalidated, idempotent, narrowly framed edits; ambiguity, foreign identity, malformed metadata, and stale plans fail closed.",
+      "operations": ["sync", "reconcile"],
+      "assumptions": ["A-PROVIDER", "A-SYNC-PERSISTENCE"],
+      "evidence": [
+        "EV-TLA-VAULT",
+        "EV-PROOF-INVENTORY",
+        "EV-CONFORMANCE-VECTORS",
+        "EV-RUST-RECONCILIATION",
+        "EV-RUST-CONFORMANCE",
+        "EV-RECONCILIATION-LIVE"
+      ]
+    },
+    {
+      "id": "C-REVOKE-01",
+      "status": "supported",
+      "statement": "Alias disable converges through read, bounded toggle, and verified read; delete remains distinct, is not automatically replayed, and does not cascade into vault mutation.",
+      "operations": ["revoke"],
+      "assumptions": ["A-CLIENT-INTEGRATION", "A-PROVIDER", "A-TRANSPORT"],
+      "evidence": [
+        "EV-TLA-LIFECYCLE",
+        "EV-PROOF-INVENTORY",
+        "EV-CONFORMANCE-VECTORS",
+        "EV-RUST-CLIENT",
+        "EV-RUST-CONFORMANCE",
+        "EV-OWNED-LIFECYCLE"
+      ]
+    },
+    {
+      "id": "C-CONTACT-REVOKE-01",
+      "status": "gap",
+      "statement": "Contact blocking is a raw provider toggle whose response is trusted without a desired-state readback loop, so it is not equivalent to idempotent alias revocation.",
+      "operations": ["send-reply", "revoke"],
+      "assumptions": ["A-PROVIDER", "A-TRANSPORT"],
+      "evidence": ["EV-ASSURANCE-ARGUMENT", "EV-RUST-CLIENT", "EV-OWNED-LIFECYCLE"]
+    },
+    {
+      "id": "C-BACKUP-RESTORE-01",
+      "status": "assumption-bound",
+      "statement": "A real CipherView serialization round trip preserves a current hidden reference, but coverage and protection of product backup formats remain external.",
+      "operations": ["backup-restore"],
+      "assumptions": ["A-VAULT-CRYPTO", "A-BACKUP"],
+      "evidence": ["EV-RUST-RECONCILIATION", "EV-RECONCILIATION-LIVE"]
+    },
+    {
+      "id": "C-PROVIDER-REPLACE-01",
+      "status": "assumption-bound",
+      "statement": "A replacement provider account with a new connection UUID treats old references as foreign, preventing silent cross-account mutation; rebinding remains explicit and operational.",
+      "operations": ["provider-replacement"],
+      "assumptions": ["A-CLIENT-IDENTITY", "A-CLIENT-INTEGRATION", "A-PROVIDER"],
+      "evidence": ["EV-TLA-VAULT", "EV-RUST-RECONCILIATION", "EV-WASM-REFERENCE"]
+    },
+    {
+      "id": "C-FAIL-01",
+      "status": "supported",
+      "statement": "Invalid or foreign input fails before dispatch or mutation, reconciliation validates every edit first, unknown non-idempotent outcomes are not replayed, and provider revoke actions do not delete vault data.",
+      "operations": ["create", "persist", "sync", "autofill", "send-reply", "reconcile", "revoke", "backup-restore", "provider-replacement"],
+      "assumptions": ["A-VAULT-CRYPTO", "A-PROVIDER", "A-TRANSPORT"],
+      "evidence": [
+        "EV-SECURITY-CONTRACT",
+        "EV-TLA-VAULT",
+        "EV-TLA-LIFECYCLE",
+        "EV-RUST-CLIENT-TESTS",
+        "EV-RUST-RECONCILIATION",
+        "EV-WASM-ADVERSARIAL",
+        "EV-TRACE-VALIDATOR",
+        "EV-TRACE-VALIDATOR-TESTS"
+      ]
+    }
+  ],
+  "graph": {
+    "rootClaim": "C-E2E-01",
+    "edges": [
+      {"from": "C-E2E-01", "to": "C-ID-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-TRANSPORT-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-SECRET-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-BINDINGS-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-RELEASE-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-CREATE-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-PERSIST-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-SYNC-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-AUTOFILL-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-SEND-REPLY-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-RECONCILE-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-REVOKE-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-BACKUP-RESTORE-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-PROVIDER-REPLACE-01", "relation": "supportedBy"},
+      {"from": "C-E2E-01", "to": "C-FAIL-01", "relation": "supportedBy"},
+      {"from": "C-SEND-REPLY-01", "to": "C-MAIL-EDGE-01", "relation": "limitedBy"},
+      {"from": "C-REVOKE-01", "to": "C-CONTACT-REVOKE-01", "relation": "limitedBy"},
+      {"from": "C-E2E-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-ID-01", "to": "A-CLIENT-IDENTITY", "relation": "boundedBy"},
+      {"from": "C-ID-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-TRANSPORT-01", "to": "A-TRANSPORT", "relation": "boundedBy"},
+      {"from": "C-TRANSPORT-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-SECRET-01", "to": "A-VAULT-CRYPTO", "relation": "boundedBy"},
+      {"from": "C-SECRET-01", "to": "A-ARTIFACT", "relation": "boundedBy"},
+      {"from": "C-BINDINGS-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-BINDINGS-01", "to": "A-ARTIFACT", "relation": "boundedBy"},
+      {"from": "C-RELEASE-01", "to": "A-ARTIFACT", "relation": "boundedBy"},
+      {"from": "C-CREATE-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-CREATE-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-CREATE-01", "to": "A-TRANSPORT", "relation": "boundedBy"},
+      {"from": "C-PERSIST-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-PERSIST-01", "to": "A-VAULT-CRYPTO", "relation": "boundedBy"},
+      {"from": "C-PERSIST-01", "to": "A-SYNC-PERSISTENCE", "relation": "boundedBy"},
+      {"from": "C-SYNC-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-SYNC-01", "to": "A-VAULT-CRYPTO", "relation": "boundedBy"},
+      {"from": "C-SYNC-01", "to": "A-SYNC-PERSISTENCE", "relation": "boundedBy"},
+      {"from": "C-AUTOFILL-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-AUTOFILL-01", "to": "A-AUTOFILL", "relation": "boundedBy"},
+      {"from": "C-SEND-REPLY-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-SEND-REPLY-01", "to": "A-TRANSPORT", "relation": "boundedBy"},
+      {"from": "C-SEND-REPLY-01", "to": "A-MAIL-EDGE", "relation": "boundedBy"},
+      {"from": "C-MAIL-EDGE-01", "to": "A-MAIL-EDGE", "relation": "boundedBy"},
+      {"from": "C-RECONCILE-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-RECONCILE-01", "to": "A-SYNC-PERSISTENCE", "relation": "boundedBy"},
+      {"from": "C-REVOKE-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-REVOKE-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-REVOKE-01", "to": "A-TRANSPORT", "relation": "boundedBy"},
+      {"from": "C-CONTACT-REVOKE-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-CONTACT-REVOKE-01", "to": "A-TRANSPORT", "relation": "boundedBy"},
+      {"from": "C-BACKUP-RESTORE-01", "to": "A-VAULT-CRYPTO", "relation": "boundedBy"},
+      {"from": "C-BACKUP-RESTORE-01", "to": "A-BACKUP", "relation": "boundedBy"},
+      {"from": "C-PROVIDER-REPLACE-01", "to": "A-CLIENT-IDENTITY", "relation": "boundedBy"},
+      {"from": "C-PROVIDER-REPLACE-01", "to": "A-CLIENT-INTEGRATION", "relation": "boundedBy"},
+      {"from": "C-PROVIDER-REPLACE-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-FAIL-01", "to": "A-VAULT-CRYPTO", "relation": "boundedBy"},
+      {"from": "C-FAIL-01", "to": "A-PROVIDER", "relation": "boundedBy"},
+      {"from": "C-FAIL-01", "to": "A-TRANSPORT", "relation": "boundedBy"}
+    ]
+  }
+}
