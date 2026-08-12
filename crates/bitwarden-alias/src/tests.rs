@@ -512,7 +512,7 @@ async fn rejects_authenticated_redirects_without_contacting_destination() {
 }
 
 #[tokio::test]
-async fn bounds_responses_and_sanitizes_rendered_errors() {
+async fn bounds_responses_and_never_renders_provider_controlled_errors() {
     let oversized = MockServer::start().await;
     Mock::given(matchers::method("GET"))
         .and(matchers::path("/api/v2/setting/domains"))
@@ -552,8 +552,8 @@ async fn bounds_responses_and_sanitizes_rendered_errors() {
     assert!(!rendered.contains('>'));
     assert!(!rendered.contains('\u{1b}'));
     assert!(!rendered.contains('\u{202e}'));
-    assert!(rendered.contains("[REDACTED]"));
-    assert!(rendered.contains("[script]alert(1)[/script]"));
+    assert!(!rendered.contains("alert(1)"));
+    assert_eq!(rendered, "alias provider request failed (HTTP 400)");
 }
 
 #[tokio::test]
@@ -715,17 +715,17 @@ async fn rejects_impossible_or_conflicting_provider_identity() {
     ));
     assert!(matches!(
         client.disable_alias(AliasId(95)).await,
-        Err(AliasError::InvalidResponseValue(
-            "provider returned an unexpected alias state"
-        ))
+        Err(AliasError::ConcurrentMutation {
+            operation: "alias state change"
+        })
     ));
     assert!(matches!(
         client
             .create_random_alias(CreateRandomAliasRequest::default())
             .await,
-        Err(AliasError::InvalidResponseValue(
-            "provider returned a zero or duplicate stable identifier"
-        ))
+        Err(AliasError::MutationResponseInvalid {
+            operation: "random-alias creation"
+        })
     ));
     assert!(matches!(
         client.get_alias(AliasId(102)).await,
@@ -763,7 +763,192 @@ async fn reports_partial_update_failure_without_replaying_the_mutation() {
         )
         .await
         .expect_err("a failed refresh must not be reported as a successful update");
-    assert!(matches!(error, AliasError::Provider { status: 503, .. }));
+    assert!(matches!(
+        error,
+        AliasError::MutationCommittedButRefreshFailed {
+            operation: "alias update"
+        }
+    ));
+}
+
+#[tokio::test]
+async fn converges_after_a_cross_process_alias_toggle_race() {
+    let server = MockServer::start().await;
+    let enabled = Arc::new(AtomicBool::new(true));
+    let interfere_once = Arc::new(AtomicBool::new(true));
+
+    let state = Arc::clone(&enabled);
+    Mock::given(matchers::method("GET"))
+        .and(matchers::path("/api/aliases/103"))
+        .respond_with(move |_: &wiremock::Request| {
+            ResponseTemplate::new(200).set_body_json(alias_json(103, state.load(Ordering::SeqCst)))
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let state = Arc::clone(&enabled);
+    let interference = Arc::clone(&interfere_once);
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/api/aliases/103/toggle"))
+        .respond_with(move |_: &wiremock::Request| {
+            let toggled = !state.fetch_xor(true, Ordering::SeqCst);
+            let observed = if interference.swap(false, Ordering::SeqCst) {
+                // Simulate another process toggling the alias again before this response is read.
+                state.store(true, Ordering::SeqCst);
+                true
+            } else {
+                toggled
+            };
+            ResponseTemplate::new(200).set_body_json(json!({"enabled": observed}))
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let state = client(&server)
+        .disable_alias(AliasId(103))
+        .await
+        .expect("bounded reconciliation should converge");
+    assert!(!state.enabled);
+    assert!(!enabled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn mutation_transport_failures_report_an_unknown_outcome_without_replay() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("raw server should bind");
+    let address = listener
+        .local_addr()
+        .expect("raw server should have an address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("raw server should accept");
+        let mut request = [0_u8; 4096];
+        let length = stream
+            .read(&mut request)
+            .expect("request should be readable");
+        // Dropping the socket without a response leaves the mutation result unknowable.
+        String::from_utf8_lossy(&request[..length]).into_owned()
+    });
+
+    let error = AliasClient::new(
+        AliasClientSettings::new(SensitiveString::from(TOKEN))
+            .with_base_url(format!("http://{address}/")),
+    )
+    .expect("loopback HTTP should be valid")
+    .delete_alias(AliasId(104))
+    .await
+    .expect_err("a dropped mutation response must be ambiguous");
+    assert!(matches!(
+        error,
+        AliasError::MutationOutcomeUnknown {
+            operation: "alias deletion"
+        }
+    ));
+    let request = server.join().expect("raw server should finish");
+    assert!(request.starts_with("DELETE /api/aliases/104 "));
+}
+
+#[tokio::test]
+async fn rejects_oversized_or_ambiguous_requests_before_dispatch() {
+    let server = MockServer::start().await;
+    let client = client(&server);
+    let invalid_lists = [
+        Vec::new(),
+        vec![MailboxId(11), MailboxId(11)],
+        (1..=21).map(MailboxId).collect(),
+    ];
+
+    for mailbox_ids in invalid_lists {
+        let error = client
+            .update_alias(
+                AliasId(105),
+                UpdateAliasRequest {
+                    mailbox_ids: Some(mailbox_ids),
+                    ..UpdateAliasRequest::default()
+                },
+            )
+            .await
+            .expect_err("invalid mailbox lists must fail locally");
+        assert!(matches!(error, AliasError::InvalidRequest(_)));
+    }
+
+    let invalid_hostname = SensitiveString::from("h".repeat(254));
+    assert!(matches!(
+        client
+            .create_random_alias(CreateRandomAliasRequest {
+                hostname: Some(invalid_hostname),
+                ..CreateRandomAliasRequest::default()
+            })
+            .await,
+        Err(AliasError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client
+            .search_aliases(SearchAliasesRequest {
+                query: SensitiveString::from("q".repeat(4097)),
+                page: 0,
+                filter: None,
+            })
+            .await,
+        Err(AliasError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client
+            .create_custom_alias(CreateCustomAliasRequest {
+                alias_prefix: "prefix/with/path".to_owned(),
+                signed_suffix: SensitiveString::from("signed-suffix"),
+                mailbox_ids: vec![MailboxId(11)],
+                hostname: None,
+                note: None,
+                name: None,
+            })
+            .await,
+        Err(AliasError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client
+            .create_custom_alias(CreateCustomAliasRequest {
+                alias_prefix: "valid-prefix".to_owned(),
+                signed_suffix: SensitiveString::from("s".repeat(4097)),
+                mailbox_ids: vec![MailboxId(11)],
+                hostname: None,
+                note: None,
+                name: None,
+            })
+            .await,
+        Err(AliasError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client
+            .update_alias(
+                AliasId(105),
+                UpdateAliasRequest {
+                    name: Some(Some(SensitiveString::from("n".repeat(129)))),
+                    ..UpdateAliasRequest::default()
+                },
+            )
+            .await,
+        Err(AliasError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client
+            .update_custom_domain(
+                CustomDomainId(106),
+                UpdateCustomDomainRequest {
+                    name: Some(Some(SensitiveString::from("d".repeat(129)))),
+                    ..UpdateCustomDomainRequest::default()
+                },
+            )
+            .await,
+        Err(AliasError::InvalidRequest(_))
+    ));
+    assert!(
+        server
+            .received_requests()
+            .await
+            .expect("request recording should be enabled")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -877,9 +1062,13 @@ async fn strips_urls_and_secrets_from_transport_error_display_and_debug() {
 
 #[test]
 fn settings_and_sensitive_models_redact_secrets() {
-    let settings = AliasClientSettings::new(SensitiveString::from(TOKEN));
+    let private_base_url = "https://provider.example/private-instance-path/";
+    let settings = AliasClientSettings::new(SensitiveString::from(TOKEN))
+        .with_base_url(private_base_url.to_owned());
     let rendered = format!("{settings:?}");
     assert!(!rendered.contains(TOKEN));
+    assert!(!rendered.contains(private_base_url));
+    assert!(!rendered.contains("private-instance-path"));
     assert!(rendered.contains("[REDACTED]"));
 
     assert!(matches!(
@@ -909,6 +1098,8 @@ fn settings_and_sensitive_models_redact_secrets() {
         "https://user@example.test/",
         "https://example.test/?token=secret",
         "https://example.test/#secret",
+        "http://example.test/",
+        "http://192.168.1.7/",
         "//example.test/",
     ] {
         assert!(matches!(
@@ -918,5 +1109,19 @@ fn settings_and_sensitive_models_redact_secrets() {
             ),
             Err(AliasError::InvalidBaseUrl(_))
         ));
+    }
+
+    for loopback in [
+        "http://localhost/",
+        "http://service.localhost/",
+        "http://127.0.0.1/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+    ] {
+        AliasClient::new(
+            AliasClientSettings::new(SensitiveString::from(TOKEN))
+                .with_base_url(loopback.to_owned()),
+        )
+        .expect("loopback self-hosted HTTP should remain available for local labs");
     }
 }

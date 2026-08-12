@@ -10,14 +10,22 @@ commercial packaging are maintained separately.
 The API token is accepted only as a sensitive value and sent only in the
 `Authentication` header. Authenticated redirects and cookie credentials are
 disabled, successful responses are capped at 512 KiB, error responses are
-capped at 16 KiB, and provider error text is bounded, sanitized and token
-redacted. Retained transport errors have their request URL removed.
+capped at 16 KiB, and provider-controlled error text is never rendered.
+Retained read-only transport errors have their request URL removed. Plain HTTP
+self-hosting is accepted only on loopback; other provider instances must use
+HTTPS.
+Caller-controlled request strings and provider response fields are bounded
+before serialization or return.
 
 Lifecycle requests are never automatically replayed. Explicit enable and
 disable operations are serialized by provider instance and stable alias ID
 across all clients in a process because SimpleLogin exposes a toggle rather
-than a set-state endpoint. Provider identities and returned states are checked
-before a mutation is reported as successful.
+than a set-state endpoint. A bounded read-toggle reconciliation also converges
+after an observed cross-process race. Transport failures after dispatch return
+an explicit unknown-outcome error so callers do not replay non-idempotent
+operations, and a confirmed update whose refresh fails is reported separately.
+Provider identities and returned states are checked before a mutation is
+reported as successful.
 
 ## Vault reconciliation
 

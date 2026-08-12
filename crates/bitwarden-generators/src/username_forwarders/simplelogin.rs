@@ -57,14 +57,22 @@ fn map_alias_error(error: AliasError) -> UsernameError {
         AliasError::AuthenticationFailed | AliasError::InvalidAuthenticationToken => {
             UsernameError::InvalidApiKey
         }
-        AliasError::Provider { status, message } => match StatusCode::from_u16(status) {
-            Ok(status) => UsernameError::ResponseContent { status, message },
+        AliasError::Provider { status } => match StatusCode::from_u16(status) {
+            Ok(status) => UsernameError::ResponseContent {
+                status,
+                message: "request failed".to_owned(),
+            },
             Err(_) => UsernameError::Unknown,
         },
         AliasError::Transport(error) => UsernameError::Reqwest(error),
         AliasError::InvalidRequest(_)
         | AliasError::InvalidBaseUrl(_)
+        | AliasError::InvalidConnectionIdentity
         | AliasError::RedirectRejected { .. }
+        | AliasError::MutationOutcomeUnknown { .. }
+        | AliasError::MutationCommittedButRefreshFailed { .. }
+        | AliasError::MutationResponseInvalid { .. }
+        | AliasError::ConcurrentMutation { .. }
         | AliasError::RateLimited { .. }
         | AliasError::ResponseTooLarge { .. }
         | AliasError::UnexpectedContentType

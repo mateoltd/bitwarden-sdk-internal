@@ -40,6 +40,18 @@ check_licensed_dependency_graph() {
     done
 }
 
+check_hardened_alias_generator() {
+    local package="$1"
+    local features
+
+    features="$(
+        cd "$REPOSITORY_ROOT"
+        cargo tree --locked --package "$package" --edges features
+    )"
+    grep -Fq 'bitwarden-generators feature "alias"' <<<"$features" \
+        || fail "$package does not route SimpleLogin generation through the hardened alias client"
+}
+
 check_paths() {
     local path="$1"
     local forbidden
@@ -71,9 +83,12 @@ check_generated_exports() {
 
 check_wasm() {
     local path="$1"
+    local expected_source_commit
+    local packaged_source_commit
 
     [[ -f "$path/package.json" ]] || fail "$path/package.json is missing"
     [[ -f "$path/LICENSE" ]] || fail "$path/LICENSE is missing"
+    [[ -f "$path/VERSION" ]] || fail "$path/VERSION is missing"
     [[ -f "$path/bitwarden_wasm_internal.d.ts" ]] \
         || fail "$path/bitwarden_wasm_internal.d.ts is missing"
     [[ -f "$path/bitwarden_wasm_internal_bg.wasm" ]] \
@@ -82,6 +97,13 @@ check_wasm() {
         || fail "$path/package.json must declare GPL-3.0-only"
     grep -q 'GNU GENERAL PUBLIC LICENSE' "$path/LICENSE" \
         || fail "$path/LICENSE is not the GPL text"
+    expected_source_commit="$(git -C "$REPOSITORY_ROOT" rev-parse HEAD)"
+    if [[ -n "$(git -C "$REPOSITORY_ROOT" status --porcelain --untracked-files=normal)" ]]; then
+        expected_source_commit="${expected_source_commit}-dirty"
+    fi
+    packaged_source_commit="$(tr -d '[:space:]' <"$path/VERSION")"
+    [[ "$packaged_source_commit" == "$expected_source_commit" ]] \
+        || fail "$path/VERSION does not identify the source commit"
     check_paths "$path"
     check_generated_exports "$path"
 
@@ -175,6 +197,8 @@ check_kotlin_host() {
 
 check_dependency_graph bitwarden-wasm-internal
 check_dependency_graph bitwarden-uniffi
+check_hardened_alias_generator bitwarden-wasm-internal
+check_hardened_alias_generator bitwarden-uniffi
 check_licensed_dependency_graph
 
 grep -Eq '"license": "GPL-3.0-only"' \
