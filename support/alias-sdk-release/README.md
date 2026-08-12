@@ -19,8 +19,9 @@ Every consumer is copied to a temporary directory and receives only the packaged
 missing compiler, SDK, or NDK is a failed prerequisite gate with a reproduction command; it is not
 reported as a passing or skipped consumer.
 
-The release workflow publishes only tags named `alias-sdk-v*`. Pull requests, branch pushes, and
-manual runs produce retained release-candidate artifacts but do not create a GitHub release.
+The release workflow is candidate-only. Pull requests, configured branch pushes, and manual runs
+produce retained GitHub Actions artifacts; it never publishes to a registry or creates a GitHub
+release.
 
 ## Upstream maintenance
 
