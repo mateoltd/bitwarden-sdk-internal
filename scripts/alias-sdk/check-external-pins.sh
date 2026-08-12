@@ -45,6 +45,25 @@ node -e '
   if (!/^[0-9a-f]{40}$/.test(contract.commit)) process.exit(1);
 ' "$clients_contract" || fail "the bitwarden/clients contract must record one full commit SHA"
 
+typescript_fixture="$repository_root/support/alias-sdk-release/consumers/typescript"
+node -e '
+  const fs = require("node:fs");
+  const root = process.argv[1];
+  const manifest = JSON.parse(fs.readFileSync(`${root}/package.json`, "utf8"));
+  const lock = JSON.parse(fs.readFileSync(`${root}/package-lock.json`, "utf8"));
+  for (const [name, version] of Object.entries(manifest.devDependencies ?? {})) {
+    if (!/^[0-9]+[.][0-9]+[.][0-9]+$/.test(version)) process.exit(1);
+    const resolved = lock.packages?.[`node_modules/${name}`];
+    if (resolved?.version !== version || !resolved.integrity?.startsWith("sha512-")) process.exit(1);
+  }
+  for (const [path, resolved] of Object.entries(lock.packages ?? {})) {
+    if (!path || !path.startsWith("node_modules/")) continue;
+    if (!/^[0-9]+[.][0-9]+[.][0-9]+/.test(resolved.version ?? "")) process.exit(1);
+    if (!resolved.integrity?.startsWith("sha512-")) process.exit(1);
+  }
+' "$typescript_fixture" \
+    || fail "the TypeScript fixture dependencies must be exact and integrity-locked"
+
 if grep -En 'uses:[[:space:]]+[^[:space:]#]+@(main|master|v[0-9]+([.]?[0-9]+)*)($|[[:space:]#])' \
     "$repository_root/.github/workflows/alias-sdk-release.yml" \
     "$repository_root/.github/workflows/alias-sdk-upstream.yml"; then
