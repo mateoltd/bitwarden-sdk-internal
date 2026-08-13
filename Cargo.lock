@@ -492,6 +492,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "bitwarden-alias"
+version = "3.0.0"
+dependencies = [
+ "bitwarden-api-base",
+ "bitwarden-core",
+ "bitwarden-sensitive-value",
+ "bitwarden-vault",
+ "http",
+ "js-sys",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 1.0.69",
+ "tokio",
+ "tsify",
+ "uniffi",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wiremock",
+]
+
+[[package]]
 name = "bitwarden-api-api"
 version = "3.0.0"
 dependencies = [
@@ -905,11 +931,13 @@ dependencies = [
 name = "bitwarden-generators"
 version = "3.0.0"
 dependencies = [
+ "bitwarden-alias",
  "bitwarden-api-base",
  "bitwarden-core",
  "bitwarden-crypto",
  "bitwarden-error",
  "bitwarden-random",
+ "bitwarden-sensitive-value",
  "password-rules-parser",
  "rand 0.10.2",
  "rand_chacha 0.10.0",
@@ -1427,6 +1455,7 @@ name = "bitwarden-uniffi"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitwarden-alias",
  "bitwarden-auth",
  "bitwarden-collections",
  "bitwarden-core",
@@ -1444,6 +1473,7 @@ dependencies = [
  "bitwarden-policies",
  "bitwarden-random",
  "bitwarden-send",
+ "bitwarden-sensitive-value",
  "bitwarden-server-communication-config",
  "bitwarden-ssh",
  "bitwarden-state",
@@ -1454,6 +1484,7 @@ dependencies = [
  "jni 0.21.1",
  "libloading",
  "rustls-platform-verifier 0.6.2",
+ "serde_json",
  "thiserror 2.0.19",
  "tracing",
  "tracing-android",
@@ -1584,6 +1615,7 @@ name = "bitwarden-wasm-internal"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitwarden-alias",
  "bitwarden-commercial-vault",
  "bitwarden-core",
  "bitwarden-crypto",
@@ -1598,6 +1630,7 @@ dependencies = [
  "bitwarden-policies",
  "bitwarden-random",
  "bitwarden-send",
+ "bitwarden-sensitive-value",
  "bitwarden-server-communication-config",
  "bitwarden-shared-unlock",
  "bitwarden-ssh",
