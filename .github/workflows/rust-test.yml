@@ -18,6 +18,7 @@ jobs:
     name: Check if tests passed
     runs-on: ubuntu-24.04
     needs:
+      - formal-alias-security
       - test
     steps:
       - name: Check if tests passed
@@ -52,6 +53,33 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --all-features
+
+  formal-alias-security:
+    name: Alias formal security model
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Check consolidated alias security contract
+        run: scripts/alias-sdk/check-security-contract.sh
 
   test-wasm:
     name: WASM

@@ -6,15 +6,12 @@ cd "$(dirname "$0")"
 # Move to the root of the repository
 cd ../../
 
-# Write VERSION file
-git rev-parse HEAD > ./crates/bitwarden-wasm-internal/npm/VERSION
-
-
 # Parse flags
 ENABLE_LICENSE_FEATURE=""
 NPM_FOLDER="npm"
 RELEASE_FLAG=""
 BUILD_FOLDER="debug"
+TARGET_DIRECTORY="${CARGO_TARGET_DIR:-./target}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,6 +27,19 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# Bind every generated package, including the separately licensed package, to its source state.
+# Debug artifacts remain usable from a development checkout but cannot masquerade as a clean
+# commit. Release artifacts must be reproducible from committed source.
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  if [[ -n "$RELEASE_FLAG" ]]; then
+    echo "Refusing to build a release artifact from a dirty worktree" >&2
+    exit 1
+  fi
+  SOURCE_COMMIT="${SOURCE_COMMIT}-dirty"
+fi
+printf '%s\n' "$SOURCE_COMMIT" > "./crates/bitwarden-wasm-internal/${NPM_FOLDER}/VERSION"
+
 if [ -n "$RELEASE_FLAG" ]; then
   echo "Building in release mode"
 else
@@ -38,6 +48,8 @@ fi
 
 if [ -n "$ENABLE_LICENSE_FEATURE" ]; then
   echo "Build will include BITWARDEN LICENSED FEATURES"
+else
+  ./scripts/check-oss-artifact-boundary.sh
 fi
 
 # Build with MVP CPU target, two reasons:
@@ -46,9 +58,14 @@ fi
 # Note that this requires build-std which is an unstable feature,
 # this normally requires a nightly build, but we can also use the
 # RUSTC_BOOTSTRAP hack to use the same stable version as the normal build
+if [ -z "$RELEASE_FLAG" ]; then
+  # wasm-bindgen TypeScript custom sections can otherwise be discarded across debug-profile
+  # codegen units even though the corresponding ABI type is retained by the final WASM module.
+  export CARGO_PROFILE_DEV_CODEGEN_UNITS=1
+fi
 RUSTFLAGS='-Ctarget-cpu=mvp --cfg getrandom_backend="wasm_js"' RUSTC_BOOTSTRAP=1 cargo build -p bitwarden-wasm-internal -Zbuild-std=panic_abort,std --target wasm32-unknown-unknown ${RELEASE_FLAG} ${ENABLE_LICENSE_FEATURE}
-cargo run -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target bundler --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER} ./target/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm
-cargo run -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target nodejs --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER}/node ./target/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm
+cargo run -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target bundler --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER} "${TARGET_DIRECTORY}/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm"
+cargo run -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target nodejs --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER}/node "${TARGET_DIRECTORY}/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm"
 
 # Format TypeScript definition files only (skip generated .wasm.js files)
 npx prettier --write "./crates/bitwarden-wasm-internal/${NPM_FOLDER}/**/*.ts"
@@ -67,3 +84,7 @@ fi
 cd crates/bitwarden-wasm-internal/${NPM_FOLDER}
 npm ci
 npx tsc --noEmit --lib es2020,dom,ESNext.Disposable bitwarden_wasm_internal.d.ts
+
+if [ -z "$ENABLE_LICENSE_FEATURE" ]; then
+  ../../../scripts/check-oss-artifact-boundary.sh --wasm "$PWD"
+fi
