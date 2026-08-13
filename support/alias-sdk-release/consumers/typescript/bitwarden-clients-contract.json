@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/bitwarden/clients.git",
+  "commit": "dcf474cd0e75ab5db798023157f543f0f217dcb9",
+  "node": ">=24.17.0",
+  "typescript": "5.9.3",
+  "compilerOptions": {
+    "strict": false,
+    "moduleResolution": "bundler",
+    "noImplicitAny": true,
+    "target": "ES2016",
+    "module": "ES2020",
+    "lib": ["es5", "es6", "es7", "dom", "ES2021", "ESNext.Disposable"],
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": false
+  }
+}

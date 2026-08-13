@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+output_directory="${1:-}"
+[[ -n "$output_directory" ]] || {
+    echo "Usage: $0 OUTPUT_DIRECTORY" >&2
+    exit 2
+}
+
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PATH="$repository_root/node_modules/.bin:$PATH"
+for command_name in node npm wasm-opt wasm2js; do
+    command -v "$command_name" >/dev/null 2>&1 || {
+        echo "WASM release host gate failed: missing $command_name" >&2
+        exit 1
+    }
+done
+
+release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")"
+alias_reference_schema_version="$(tr -d '[:space:]' <"$repository_root/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"
+package_version="$(node -p \
+    "require('$repository_root/crates/bitwarden-wasm-internal/npm/package.json').version")"
+[[ "$package_version" == "$release_version" ]] || {
+    echo "WASM package version $package_version does not match release version $release_version" >&2
+    exit 1
+}
+
+output_directory="$(mkdir -p "$output_directory" && cd "$output_directory" && pwd)"
+"$repository_root/crates/bitwarden-wasm-internal/build.sh" -r
+"$repository_root/scripts/check-oss-artifact-boundary.sh" \
+    --wasm "$repository_root/crates/bitwarden-wasm-internal/npm"
+(
+    cd "$repository_root/crates/bitwarden-wasm-internal/npm"
+    npm pack --ignore-scripts --pack-destination "$output_directory"
+)
+cp "$repository_root/crates/bitwarden-wasm-internal/npm/VERSION" "$output_directory/VERSION"
+printf '%s\n' "$release_version" >"$output_directory/PACKAGE_VERSION"
+printf '%s\n' "$alias_reference_schema_version" \
+    >"$output_directory/ALIAS_REFERENCE_SCHEMA_VERSION"
+
+echo "WASM alias SDK artifact built at $output_directory"

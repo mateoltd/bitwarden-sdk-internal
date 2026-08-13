@@ -1,0 +1,28 @@
+# Each JVM-safe component is generated from its authoritative crate config. This
+# shared map keeps cross-component imports stable when UniFFI generates one
+# component at a time.
+[bindings.kotlin.external_packages]
+bitwarden_alias = "uniffi.bitwarden_alias"
+bitwarden_api_base = "com.bitwarden.api.base"
+bitwarden_auth = "com.bitwarden.auth"
+bitwarden_collections = "com.bitwarden.collections"
+bitwarden_core = "com.bitwarden.core"
+bitwarden_crypto = "com.bitwarden.crypto"
+bitwarden_crypto_sync_handler = "com.bitwarden.cryptosynchandler"
+bitwarden_encoding = "com.bitwarden.encoding"
+bitwarden_exporters = "com.bitwarden.exporters"
+bitwarden_fido = "com.bitwarden.fido"
+bitwarden_generators = "com.bitwarden.generators"
+bitwarden_importers = "uniffi.bitwarden_importers"
+bitwarden_organizations = "com.bitwarden.organizations"
+bitwarden_pm = "com.bitwarden.pm"
+bitwarden_policies = "com.bitwarden.policies"
+bitwarden_random = "com.bitwarden.random"
+bitwarden_send = "com.bitwarden.send"
+bitwarden_sensitive_value = "uniffi.bitwarden_sensitive_value"
+bitwarden_server_communication_config = "com.bitwarden.servercommunicationconfig"
+bitwarden_ssh = "com.bitwarden.ssh"
+bitwarden_state = "com.bitwarden.state"
+bitwarden_unlock = "com.bitwarden.unlock"
+bitwarden_user_crypto_management = "com.bitwarden.usercryptomanagement"
+bitwarden_vault = "com.bitwarden.vault"
