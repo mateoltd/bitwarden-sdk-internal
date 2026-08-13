@@ -23,7 +23,7 @@ on:
   push:
     branches:
       - "main"
-      - "integration/alias-platform"
+      - "integration/public-alias-sdk"
 
 permissions:
   contents: read
