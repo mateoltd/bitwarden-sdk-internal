@@ -3,7 +3,8 @@
 This directory contains clean-room consumers and pinned maintenance inputs for the GPL-only alias
 SDK artifacts. It does not define product behavior. The Rust API, formal security contract, and
 generated WASM and UniFFI bindings in this repository are the single authoritative implementation
-for clients. Historical topic branches are ancestry only and are not release inputs.
+for clients. Historical topic branches are reference inputs only and are not release inputs or
+ancestors of the public branch.
 
 ## Gates
 
@@ -25,8 +26,8 @@ as a passing or skipped consumer.
 
 `VERSION` is the canonical candidate version, `ALIAS_REFERENCE_SCHEMA_VERSION` is the canonical
 wire-schema version stamped into every candidate package directory, and `INTEGRATION_BASE` records
-the exact integration commit from which this schema reset was branched. The release workflow is
-candidate-only. Pull requests, pushes to `integration/alias-platform` or `main`, and manual runs
+the exact `origin/main` commit from which the clean public history begins. The release workflow is
+candidate-only. Pull requests, pushes to `integration/public-alias-sdk` or `main`, and manual runs
 produce retained GitHub Actions artifacts; it never publishes to a registry or creates a GitHub
 release. After this work is merged, `main` is the canonical source and continues to run the same
 contract.
