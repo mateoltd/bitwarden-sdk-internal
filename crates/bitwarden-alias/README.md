@@ -24,8 +24,8 @@ checked before a mutation is reported as successful.
 
 ## Vault reconciliation
 
-Alias references are stored in the encrypted hidden field `bitwarden.alias.reference`. This is the
-only reserved field name and the value is the canonical JSON emitted by the SDK. Version 1
+Alias references are stored in the first-class encrypted login member `aliasReference`. The value
+is the canonical JSON emitted by the SDK. Version 1
 namespaces the provider-assigned alias ID by provider, canonical service instance and a stable
 connection ID. The connection ID is a client-generated canonical UUID v4 that is persisted with the
 provider connection; it must never be derived from an API token, password, mailbox credential or any

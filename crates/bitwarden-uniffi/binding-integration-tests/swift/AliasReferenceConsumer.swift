@@ -4,7 +4,6 @@ import Foundation
 struct AliasReferenceConsumer {
     private static let connectionOne = "11111111-1111-4111-8111-111111111111"
     private static let instance = "https://aliases.example.test/"
-    private static let referenceField = "bitwarden.alias.reference"
 
     static func main() throws {
         let firstIdentity = identity(connectionOne)
@@ -32,9 +31,8 @@ struct AliasReferenceConsumer {
             cipher: cipher(id: 1, username: "first@example.test")
         )
         precondition(bound.changed)
-        precondition(bound.cipher.fields == [
-            FieldView(name: referenceField, value: encoded, type: .hidden, linkedId: nil)
-        ])
+        precondition(bound.cipher.login?.aliasReference == encoded)
+        precondition(bound.cipher.fields.isEmpty)
 
         let plan = try planAliasReconciliation(
             provider: firstIdentity,
@@ -122,6 +120,7 @@ struct AliasReferenceConsumer {
             login: LoginView(
                 username: username,
                 password: nil,
+                aliasReference: nil,
                 passwordRevisionDate: nil,
                 uris: nil,
                 totp: nil,

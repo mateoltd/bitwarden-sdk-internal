@@ -11,7 +11,7 @@
   "modelSha256": "5fd611134a3f994829148c1acfe5a4749181710a19e1771886a40356f3a31533",
   "referenceSchema": {
     "version": 1,
-    "vaultFieldName": "bitwarden.alias.reference",
+    "loginMemberName": "aliasReference",
     "orderedFields": [
       "version",
       "provider",

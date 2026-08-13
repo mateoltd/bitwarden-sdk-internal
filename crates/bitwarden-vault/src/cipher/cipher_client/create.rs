@@ -216,6 +216,7 @@ mod tests {
             r#type: CipherViewType::Login(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -313,6 +314,7 @@ mod tests {
             Some(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -413,6 +415,7 @@ mod tests {
             r#type: CipherViewType::Login(LoginView {
                 username: None,
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

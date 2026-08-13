@@ -8,7 +8,6 @@ import com.bitwarden.vault.CipherId
 import com.bitwarden.vault.CipherRepromptType
 import com.bitwarden.vault.CipherType
 import com.bitwarden.vault.CipherView
-import com.bitwarden.vault.FieldType
 import com.bitwarden.vault.FieldView
 import com.bitwarden.vault.LoginView
 import java.time.Instant
@@ -19,7 +18,6 @@ import uniffi.bitwarden_alias.MailboxRef
 
 private const val CONNECTION_ONE = "11111111-1111-4111-8111-111111111111"
 private const val INSTANCE = "https://aliases.example.test/"
-private const val REFERENCE_FIELD = "bitwarden.alias.reference"
 
 fun main() {
     val firstIdentity = identity(CONNECTION_ONE)
@@ -39,10 +37,8 @@ fun main() {
 
     val bound = bindAliasReference(encoded, cipher(1, "first@example.test"))
     check(bound.changed)
-    check(
-        bound.cipher.fields ==
-            listOf(FieldView(REFERENCE_FIELD, encoded, FieldType.HIDDEN, null)),
-    )
+    check(bound.cipher.login?.aliasReference == encoded)
+    check(bound.cipher.fields.isEmpty())
 
     val plan = planAliasReconciliation(
         firstIdentity,
@@ -113,7 +109,7 @@ private fun cipher(
     name = "Alias $id",
     notes = null,
     type = CipherType.LOGIN,
-    login = LoginView(username, null, null, null, null, null, null),
+    login = LoginView(username, null, null, null, null, null, null, null),
     identity = null,
     card = null,
     secureNote = null,

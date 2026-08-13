@@ -197,6 +197,7 @@ mod tests {
             login: Some(Login {
                 username: None,
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

@@ -109,7 +109,7 @@ pub fn create_alias_reference(
 pub fn parse_alias_reference(
     value: SensitiveString,
 ) -> Result<AliasReference, AliasReferenceError> {
-    // EXPOSE: Parsing requires the decrypted hidden-field payload. Errors never render it.
+    // EXPOSE: Parsing requires the decrypted login-member payload. Errors never render it.
     core_parse_alias_reference(value.expose())
 }
 

@@ -6,7 +6,6 @@ import {
   CipherRepromptType,
   CipherType,
   CipherView,
-  FieldType,
   SensitiveString,
   apply_alias_reconciliation,
   bind_alias_reference,
@@ -20,7 +19,7 @@ import { readFileSync } from "node:fs";
 type ConformanceVectors = {
   referenceSchema: {
     version: number;
-    vaultFieldName: string;
+    loginMemberName: string;
     credentialSentinel: string;
   };
   identities: {
@@ -49,7 +48,6 @@ const conformance = JSON.parse(
 const CONNECTION_ONE = conformance.identities.primary.connectionId;
 const CONNECTION_TWO = conformance.identities.sameOriginSecondAccount.connectionId;
 const INSTANCE = conformance.identities.primary.instance;
-const REFERENCE_FIELD = conformance.referenceSchema.vaultFieldName;
 const NOW = "2026-08-11T10:00:00Z";
 
 const sensitive = (value: string): SensitiveString => value as SensitiveString;
@@ -84,7 +82,6 @@ const alias = (id: number, address: string): Alias => ({
 const cipher = (
   index: number,
   username: string,
-  fields: CipherView["fields"] = [],
 ): CipherView => ({
   id: cipherId(index),
   organizationId: undefined,
@@ -97,6 +94,7 @@ const cipher = (
   login: {
     username,
     password: undefined,
+    aliasReference: undefined,
     passwordRevisionDate: undefined,
     uris: undefined,
     totp: undefined,
@@ -119,7 +117,7 @@ const cipher = (
   localData: undefined,
   attachments: undefined,
   attachmentDecryptionFailures: undefined,
-  fields,
+  fields: [],
   passwordHistory: undefined,
   creationDate: NOW,
   deletedDate: undefined,
@@ -144,9 +142,8 @@ test("uses one canonical connection-scoped reference across the WASM boundary", 
 
   const bound = bind_alias_reference(encoded, cipher(1, "first@example.test"));
   expect(bound.changed).toBe(true);
-  expect(bound.cipher.fields).toEqual([
-    { name: REFERENCE_FIELD, value: encoded, type: FieldType.Hidden, linkedId: undefined },
-  ]);
+  expect(bound.cipher.login?.aliasReference).toBe(encoded);
+  expect(bound.cipher.fields).toEqual([]);
   expect(bind_alias_reference(encoded, bound.cipher).changed).toBe(false);
 });
 
@@ -197,36 +194,28 @@ test("does not infer a binding from an address without a current reference", () 
   expect(plan.actions).toHaveLength(0);
 });
 
-test("safely classifies malformed, duplicate, oversized, and visible reserved fields", () => {
-  const malformed = cipher(10, "malformed@example.test", [
-    { name: REFERENCE_FIELD, value: "{", type: FieldType.Hidden, linkedId: undefined },
-  ]);
-  const duplicate = cipher(11, "duplicate@example.test", [
-    { name: REFERENCE_FIELD, value: "{}", type: FieldType.Hidden, linkedId: undefined },
-    { name: REFERENCE_FIELD, value: "{}", type: FieldType.Hidden, linkedId: undefined },
-  ]);
-  const oversized = cipher(12, "oversized@example.test", [
-    { name: REFERENCE_FIELD, value: "x".repeat(4097), type: FieldType.Hidden, linkedId: undefined },
-  ]);
-  const visible = cipher(13, "visible@example.test", [
-    { name: REFERENCE_FIELD, value: "{}", type: FieldType.Text, linkedId: undefined },
-  ]);
+test("safely classifies malformed, oversized, and future login references", () => {
+  const malformed = cipher(10, "malformed@example.test");
+  malformed.login!.aliasReference = "{";
+  const oversized = cipher(11, "oversized@example.test");
+  oversized.login!.aliasReference = "x".repeat(4097);
+  const future = cipher(12, "future@example.test");
+  future.login!.aliasReference = "{\"version\":999}";
 
   const plan = plan_alias_reconciliation(
     identity(CONNECTION_ONE),
     [],
-    [malformed, duplicate, oversized, visible],
+    [malformed, oversized, future],
   );
-  expect(plan.summary.skippedCiphers).toBe(4n);
+  expect(plan.summary.skippedCiphers).toBe(3n);
   expect(plan.actions).toHaveLength(0);
   expect(
     plan.outcomes.map((outcome) => outcome.status === "skippedCipher" && outcome.reason),
   ).toEqual(
     expect.arrayContaining([
       "malformed_reference",
-      "duplicate_reference_fields",
       "reference_too_large",
-      "reference_field_not_hidden",
+      "unsupported_reference_version",
     ]),
   );
 });

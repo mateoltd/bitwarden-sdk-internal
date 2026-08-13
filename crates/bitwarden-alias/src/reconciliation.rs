@@ -4,7 +4,7 @@ use std::{
 };
 
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
-use bitwarden_vault::{CipherId, CipherType, CipherView, FieldType, FieldView};
+use bitwarden_vault::{CipherId, CipherType, CipherView};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 #[cfg(feature = "wasm")]
@@ -14,11 +14,8 @@ use uuid::{Uuid, Variant, Version};
 
 use crate::{Alias, AliasId, is_safe_email_address};
 
-/// First public schema version stored in vault alias-reference fields.
+/// First public schema version stored in a login's encrypted alias-reference member.
 pub const ALIAS_REFERENCE_VERSION: u32 = 1;
-
-/// Reserved hidden-field name used to persist alias identity inside an encrypted vault cipher.
-pub const ALIAS_REFERENCE_FIELD_NAME: &str = "bitwarden.alias.reference";
 
 const MAX_ALIAS_REFERENCE_BYTES: usize = 4 * 1024;
 
@@ -160,7 +157,7 @@ impl AliasReference {
         }
     }
 
-    /// Encodes the reference for encrypted storage in a vault hidden field.
+    /// Encodes the reference for encrypted storage in a login's first-class alias member.
     pub fn encode(&self) -> Result<SensitiveString, AliasReferenceError> {
         self.validate()?;
         let value = serde_json::to_string(self).map_err(|_| AliasReferenceError::EncodingFailed)?;
@@ -172,7 +169,7 @@ impl AliasReference {
         Ok(SensitiveString::from(value))
     }
 
-    /// Decodes and validates an encrypted vault-field value.
+    /// Decodes and validates an encrypted login alias-reference value.
     pub fn decode(value: &str) -> Result<Self, AliasReferenceError> {
         ensure_reference_size(value)?;
         let version = reference_version(value)?;
@@ -185,22 +182,23 @@ impl AliasReference {
         Ok(reference)
     }
 
-    /// Reads the single reserved reference field from a decrypted vault cipher.
+    /// Reads the first-class alias reference from a decrypted vault login.
     pub fn from_cipher(cipher: &CipherView) -> Result<Option<Self>, AliasReferenceError> {
-        let Some(field) = reserved_reference_field(cipher)? else {
+        let Some(login) = cipher.login.as_ref() else {
             return Ok(None);
         };
-        let value = field
-            .value
-            .as_deref()
-            .ok_or(AliasReferenceError::MissingValue)?;
+        let Some(value) = login.alias_reference.as_deref() else {
+            return Ok(None);
+        };
+        if cipher.r#type != CipherType::Login {
+            return Err(AliasReferenceError::NotLoginCipher);
+        }
         Self::decode(value).map(Some)
     }
 
     /// Attaches this reference to a login cipher and synchronizes its username.
     ///
-    /// Returns `true` when the cipher changed. Duplicate reserved fields are rejected instead of
-    /// being silently discarded.
+    /// Returns `true` when the cipher changed.
     pub fn bind_to_cipher(&self, cipher: &mut CipherView) -> Result<bool, AliasReferenceError> {
         if cipher.r#type != CipherType::Login || cipher.login.is_none() {
             return Err(AliasReferenceError::NotLoginCipher);
@@ -295,18 +293,6 @@ pub enum AliasReferenceError {
         /// Unsupported version number.
         version: u32,
     },
-    /// The reserved reference field appeared more than once.
-    #[error("vault cipher contains duplicate alias reference fields")]
-    DuplicateFields,
-    /// The reserved field must stay hidden so vault clients do not casually render metadata.
-    #[error("vault alias reference field must be hidden")]
-    FieldMustBeHidden,
-    /// A reserved hidden field cannot also point at a linked vault property.
-    #[error("vault alias reference field must not have a linked identifier")]
-    FieldMustNotBeLinked,
-    /// The reserved reference field had no value.
-    #[error("vault alias reference field has no value")]
-    MissingValue,
     /// References can only bind login ciphers.
     #[error("alias references can only bind login ciphers")]
     NotLoginCipher,
@@ -335,14 +321,6 @@ impl From<AliasReferenceError> for wasm_bindgen::JsValue {
 pub enum AliasReconciliationSkipReason {
     /// The cipher has not received a stable vault identifier.
     MissingCipherId,
-    /// The reserved field appeared more than once.
-    DuplicateReferenceFields,
-    /// The reserved field was not hidden.
-    ReferenceFieldNotHidden,
-    /// The reserved hidden field also carried a linked-field identifier.
-    ReferenceFieldHasLinkedId,
-    /// The reserved field had no value.
-    MissingReferenceValue,
     /// The reference exceeded its strict size limit.
     ReferenceTooLarge,
     /// The reference was malformed.
@@ -939,29 +917,6 @@ fn reference_version(value: &str) -> Result<u32, AliasReferenceError> {
         .map_err(|_| AliasReferenceError::Malformed)
 }
 
-fn reserved_reference_field(
-    cipher: &CipherView,
-) -> Result<Option<&FieldView>, AliasReferenceError> {
-    let mut references = cipher
-        .fields
-        .iter()
-        .flatten()
-        .filter(|field| field.name.as_deref() == Some(ALIAS_REFERENCE_FIELD_NAME));
-    let Some(field) = references.next() else {
-        return Ok(None);
-    };
-    if references.next().is_some() {
-        return Err(AliasReferenceError::DuplicateFields);
-    }
-    if field.r#type != FieldType::Hidden {
-        return Err(AliasReferenceError::FieldMustBeHidden);
-    }
-    if field.linked_id.is_some() {
-        return Err(AliasReferenceError::FieldMustNotBeLinked);
-    }
-    Ok(Some(field))
-}
-
 struct AliasIndex<'a> {
     by_id: HashMap<AliasId, &'a Alias>,
 }
@@ -1012,16 +967,6 @@ fn skip_reason(error: &AliasReferenceError) -> AliasReconciliationSkipReason {
         AliasReferenceError::UnsupportedVersion { .. } => {
             AliasReconciliationSkipReason::UnsupportedReferenceVersion
         }
-        AliasReferenceError::DuplicateFields => {
-            AliasReconciliationSkipReason::DuplicateReferenceFields
-        }
-        AliasReferenceError::FieldMustBeHidden => {
-            AliasReconciliationSkipReason::ReferenceFieldNotHidden
-        }
-        AliasReferenceError::FieldMustNotBeLinked => {
-            AliasReconciliationSkipReason::ReferenceFieldHasLinkedId
-        }
-        AliasReferenceError::MissingValue => AliasReconciliationSkipReason::MissingReferenceValue,
         AliasReferenceError::NotLoginCipher => AliasReconciliationSkipReason::NonLoginCipher,
         AliasReferenceError::InvalidProviderInstance(_)
         | AliasReferenceError::InvalidConnectionIdentity(_)
@@ -1065,46 +1010,15 @@ fn write_reference(
         return Err(AliasReferenceError::NotLoginCipher);
     }
 
-    let fields = cipher.fields.get_or_insert_with(Vec::new);
-    let reference_indices: Vec<usize> = fields
-        .iter()
-        .enumerate()
-        .filter_map(|(index, field)| {
-            (field.name.as_deref() == Some(ALIAS_REFERENCE_FIELD_NAME)).then_some(index)
-        })
-        .collect();
-    if reference_indices.len() > 1 {
-        return Err(AliasReferenceError::DuplicateFields);
-    }
-
     let username_changed = login.username.as_deref() != Some(address.as_str());
-    let field_changed = if let Some(index) = reference_indices.first().copied() {
-        let field = &mut fields[index];
-        if field.r#type != FieldType::Hidden {
-            return Err(AliasReferenceError::FieldMustBeHidden);
-        }
-        let current_value = field
-            .value
-            .as_deref()
-            .ok_or(AliasReferenceError::MissingValue)?;
+    if let Some(current) = login.alias_reference.as_deref() {
         // Existing metadata must be valid and current before it can be overwritten.
-        AliasReference::decode(current_value)?;
-        let changed =
-            field.value.as_deref() != Some(encoded_reference.as_str()) || field.linked_id.is_some();
-        field.linked_id = None;
-        field.value = Some(encoded_reference);
-        changed
-    } else {
-        fields.push(FieldView {
-            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
-            value: Some(encoded_reference),
-            r#type: FieldType::Hidden,
-            linked_id: None,
-        });
-        true
-    };
+        AliasReference::decode(current)?;
+    }
+    let reference_changed = login.alias_reference.as_deref() != Some(encoded_reference.as_str());
+    login.alias_reference = Some(encoded_reference);
     login.username = Some(address);
-    Ok(username_changed || field_changed)
+    Ok(username_changed || reference_changed)
 }
 
 #[cfg(test)]
@@ -1164,6 +1078,7 @@ mod tests {
             login: Some(LoginView {
                 username,
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -1195,13 +1110,12 @@ mod tests {
         }
     }
 
-    fn attach_raw_reference(cipher: &mut CipherView, value: String, field_type: FieldType) {
-        cipher.fields.get_or_insert_with(Vec::new).push(FieldView {
-            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
-            value: Some(value),
-            r#type: field_type,
-            linked_id: None,
-        });
+    fn attach_raw_reference(cipher: &mut CipherView, value: String) {
+        cipher
+            .login
+            .as_mut()
+            .expect("test cipher should be a login")
+            .alias_reference = Some(value);
     }
 
     #[test]
@@ -1519,41 +1433,10 @@ mod tests {
         let provider = provider();
         let aliases = vec![alias(8, "eight@example.test".to_owned())];
         let mut malformed = login_cipher(Some(CipherId::new_v4()), None);
-        attach_raw_reference(
-            &mut malformed,
-            "token=do-not-render".to_owned(),
-            FieldType::Hidden,
-        );
+        attach_raw_reference(&mut malformed, "token=do-not-render".to_owned());
 
         let mut future = login_cipher(Some(CipherId::new_v4()), None);
-        attach_raw_reference(
-            &mut future,
-            "{\"version\":999}".to_owned(),
-            FieldType::Hidden,
-        );
-
-        let mut visible = login_cipher(Some(CipherId::new_v4()), None);
-        let encoded = AliasReference::new(&provider, &aliases[0])
-            .expect("reference should construct")
-            .encode()
-            .expect("reference should encode")
-            .expose_owned();
-        attach_raw_reference(&mut visible, encoded, FieldType::Text);
-
-        let mut linked = login_cipher(Some(CipherId::new_v4()), None);
-        let encoded = AliasReference::new(&provider, &aliases[0])
-            .expect("reference should construct")
-            .encode()
-            .expect("reference should encode")
-            .expose_owned();
-        attach_raw_reference(&mut linked, encoded, FieldType::Hidden);
-        let linked_id = serde_json::from_value(serde_json::json!(100))
-            .expect("username linked ID should deserialize");
-        linked
-            .fields
-            .as_mut()
-            .expect("linked fixture should have fields")[0]
-            .linked_id = Some(linked_id);
+        attach_raw_reference(&mut future, "{\"version\":999}".to_owned());
 
         let foreign_provider =
             AliasProviderIdentity::simplelogin("https://other.example.test", OTHER_CONNECTION_ID)
@@ -1570,16 +1453,17 @@ mod tests {
             .bind_to_cipher(&mut non_login)
             .expect("reference should attach before changing type");
         non_login.r#type = CipherType::SecureNote;
-        non_login.login = None;
 
-        let missing_id = login_cipher(None, Some("eight@example.test".to_owned()));
-        let ciphers = vec![
-            malformed, future, visible, linked, foreign, non_login, missing_id,
-        ];
+        let mut missing_id = login_cipher(None, Some("eight@example.test".to_owned()));
+        AliasReference::new(&provider, &aliases[0])
+            .expect("reference should construct")
+            .bind_to_cipher(&mut missing_id)
+            .expect("reference should attach");
+        let ciphers = vec![malformed, future, foreign, non_login, missing_id];
         let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
             .expect("unsafe references should be reported, not fatal");
 
-        assert_eq!(plan.summary.skipped_ciphers, 6);
+        assert_eq!(plan.summary.skipped_ciphers, 5);
         assert_eq!(plan.summary.unbound_aliases, 1);
         assert!(plan.actions.is_empty());
         let rendered = plan
@@ -1591,32 +1475,18 @@ mod tests {
         assert!(plan.outcomes.iter().any(|outcome| matches!(
             outcome,
             AliasReconciliationOutcome::SkippedCipher {
-                reason: AliasReconciliationSkipReason::ReferenceFieldHasLinkedId,
+                reason: AliasReconciliationSkipReason::NonLoginCipher,
                 ..
             }
         )));
     }
 
     #[test]
-    fn duplicate_oversized_and_hostile_reserved_fields_are_never_repaired() {
+    fn oversized_hostile_and_future_references_are_never_repaired() {
         let provider = provider();
         let aliases = vec![alias(18, "eighteen@example.test".to_owned())];
-        let valid = AliasReference::new(&provider, &aliases[0])
-            .expect("reference should construct")
-            .encode()
-            .expect("reference should encode")
-            .expose_owned();
-
-        let mut duplicate = login_cipher(Some(CipherId::new_v4()), None);
-        attach_raw_reference(&mut duplicate, valid.clone(), FieldType::Hidden);
-        attach_raw_reference(&mut duplicate, valid, FieldType::Hidden);
-
         let mut oversized = login_cipher(Some(CipherId::new_v4()), None);
-        attach_raw_reference(
-            &mut oversized,
-            "x".repeat(MAX_ALIAS_REFERENCE_BYTES + 1),
-            FieldType::Hidden,
-        );
+        attach_raw_reference(&mut oversized, "x".repeat(MAX_ALIAS_REFERENCE_BYTES + 1));
 
         let hostile_secret = "hostile-api-token-never-render";
         let mut hostile = login_cipher(Some(CipherId::new_v4()), None);
@@ -1625,27 +1495,14 @@ mod tests {
             format!(
                 "{{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":18,\"address\":\"eighteen@example.test\",\"apiToken\":\"{hostile_secret}\"}}"
             ),
-            FieldType::Hidden,
         );
-        hostile.fields.get_or_insert_with(Vec::new).push(FieldView {
-            name: Some("x".repeat(MAX_ALIAS_REFERENCE_BYTES * 2)),
-            value: Some(hostile_secret.to_owned()),
-            r#type: FieldType::Hidden,
-            linked_id: None,
-        });
+        let mut future = login_cipher(Some(CipherId::new_v4()), None);
+        attach_raw_reference(&mut future, "{\"version\":999}".to_owned());
 
-        let mut missing = login_cipher(Some(CipherId::new_v4()), None);
-        missing.fields = Some(vec![FieldView {
-            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
-            value: None,
-            r#type: FieldType::Hidden,
-            linked_id: None,
-        }]);
-
-        let ciphers = vec![duplicate, oversized, hostile, missing];
+        let ciphers = vec![oversized, hostile, future];
         let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
-            .expect("hostile fields should be skipped rather than aborting reconciliation");
-        assert_eq!(plan.summary.skipped_ciphers, 4);
+            .expect("hostile references should be skipped rather than aborting reconciliation");
+        assert_eq!(plan.summary.skipped_ciphers, 3);
         assert_eq!(plan.summary.unbound_aliases, 1);
         assert!(plan.actions.is_empty());
         let rendered = format!("{:?}", plan.outcomes);
@@ -1675,7 +1532,7 @@ mod tests {
         let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
             .expect("planning should succeed");
 
-        ciphers[1].fields = None;
+        ciphers[1].login.as_mut().expect("login").alias_reference = None;
         let error = apply_alias_reconciliation(&plan, &aliases, &mut ciphers)
             .expect_err("stale plan should fail atomically");
         assert!(matches!(error, AliasReconciliationError::StalePlan(_)));

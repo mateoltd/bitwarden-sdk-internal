@@ -376,6 +376,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -442,6 +443,7 @@ mod tests {
                         .map(|p| p.encrypt(&mut ctx, SymmetricKeySlotId::User))
                         .transpose()
                         .unwrap(),
+                    alias_reference: None,
                     password_revision_date: None,
                     uris: None,
                     totp: None,

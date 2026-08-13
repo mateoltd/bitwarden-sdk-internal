@@ -151,6 +151,7 @@ fn login_cipher(id: CipherId, username: String) -> CipherView {
         login: Some(LoginView {
             username: Some(username),
             password: None,
+            alias_reference: None,
             password_revision_date: None,
             uris: None,
             totp: None,

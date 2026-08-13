@@ -8,7 +8,7 @@ external provider satisfies them.
 
 The protected assets are provider credentials, provider-account identity, provider alias state,
 alias-to-vault bindings, and vault items unrelated to aliases. Provider responses, vault reference
-fields, decrypted `CipherView` inputs, concurrent clients, and delayed or replayed responses are
+members, decrypted `CipherView` inputs, concurrent clients, and delayed or replayed responses are
 untrusted inputs. The authenticated provider origin and the caller's normal vault encryption and
 persistence path are outside the proof boundary and are explicit assumptions below.
 
@@ -24,11 +24,11 @@ persistence path are outside the proof boundary and are explicit assumptions bel
 - **REC-1 Deterministic reconciliation.** Planning MUST be non-mutating. Automatic refresh MAY occur
   only for one unambiguous current reference. Ciphers without a current reference MUST NOT be
   inferred from their username or address. Duplicate alias IDs, duplicate cipher IDs, duplicate
-  reserved fields, stale plans, and conflicting current claims MUST fail or produce no repair. Apply
+  stale plans and conflicting current claims MUST fail or produce no repair. Apply
   MUST validate every action before its first mutation.
 - **REC-2 Idempotence and frame condition.** Reapplying a valid plan MUST be a no-op once its
   postcondition is satisfied. Reconciliation MAY change only the target login username and the one
-  hidden alias-reference field. All other cipher fields and all unrelated ciphers MUST remain
+  encrypted login alias-reference member. All other cipher members and all unrelated ciphers MUST remain
   unchanged.
 - **LIFE-1 Disable semantics.** Disable is an explicit desired-state operation, not an exposed
   toggle. The SDK MAY issue the provider's toggle only after a read observes the opposite state.
@@ -44,7 +44,7 @@ persistence path are outside the proof boundary and are explicit assumptions bel
 - **REF-1 Canonical reference schema.** Version 1 reference JSON MUST contain exactly, and in
   canonical serialization order: `version`, `provider`, `providerInstance`, `connectionId`,
   `aliasId`, and `address`. Unknown fields, non-canonical instances, non-v4 connection IDs, zero
-  alias IDs, unsafe addresses, visible or linked reserved fields, and oversized payloads MUST fail
+  alias IDs, unsafe addresses, and oversized payloads MUST fail
   closed. A missing, zero, malformed, version 2, or unknown future version MUST fail closed. The SDK
   MUST NOT decode, migrate, or provide a compatibility fallback for any non-version-1 reference.
 - **SECRET-1 Non-disclosure.** Reference serialization MUST NOT contain an API token, password,

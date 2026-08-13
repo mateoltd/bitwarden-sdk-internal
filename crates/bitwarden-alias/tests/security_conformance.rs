@@ -12,10 +12,9 @@ use std::{
 };
 
 use bitwarden_alias::{
-    ALIAS_REFERENCE_FIELD_NAME, ALIAS_REFERENCE_VERSION, Alias, AliasClient, AliasClientSettings,
-    AliasError, AliasId, AliasProviderIdentity, AliasReferenceError, MailboxId, MailboxRef,
-    apply_alias_reconciliation, create_alias_reference, parse_alias_reference,
-    plan_alias_reconciliation,
+    ALIAS_REFERENCE_VERSION, Alias, AliasClient, AliasClientSettings, AliasError, AliasId,
+    AliasProviderIdentity, AliasReferenceError, MailboxId, MailboxRef, apply_alias_reconciliation,
+    create_alias_reference, parse_alias_reference, plan_alias_reconciliation,
 };
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_vault::{
@@ -48,7 +47,7 @@ struct Vectors {
 #[serde(rename_all = "camelCase")]
 struct ReferenceSchema {
     version: u32,
-    vault_field_name: String,
+    login_member_name: String,
     ordered_fields: Vec<String>,
     forbidden_fields: Vec<String>,
     credential_sentinel: String,
@@ -216,20 +215,12 @@ fn cipher(fixture: &CipherFixture) -> CipherView {
     let timestamp = "2026-08-12T00:00:00Z"
         .parse()
         .expect("fixture timestamp must parse");
-    let mut fields = vec![FieldView {
+    let fields = vec![FieldView {
         name: Some(fixture.custom_field_name.clone()),
         value: Some(fixture.custom_field_value.clone()),
         r#type: FieldType::Text,
         linked_id: None,
     }];
-    if let Some(reference) = &fixture.alias_reference {
-        fields.push(FieldView {
-            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
-            value: Some(reference.clone()),
-            r#type: FieldType::Hidden,
-            linked_id: None,
-        });
-    }
     CipherView {
         id: Some(fixture.id.parse().expect("fixture cipher ID must parse")),
         organization_id: None,
@@ -242,6 +233,7 @@ fn cipher(fixture: &CipherFixture) -> CipherView {
         login: Some(LoginView {
             username: Some(fixture.username.clone()),
             password: Some("unrelated-password".to_owned()),
+            alias_reference: fixture.alias_reference.clone(),
             password_revision_date: None,
             uris: None,
             totp: None,
@@ -277,11 +269,7 @@ fn unrelated_projection(cipher: &CipherView) -> Value {
     let mut value = serde_json::to_value(cipher).expect("cipher projection must serialize");
     if let Some(login) = value.get_mut("login").and_then(Value::as_object_mut) {
         login.insert("username".to_owned(), Value::Null);
-    }
-    if let Some(fields) = value.get_mut("fields").and_then(Value::as_array_mut) {
-        fields.retain(|field| {
-            field.get("name").and_then(Value::as_str) != Some(ALIAS_REFERENCE_FIELD_NAME)
-        });
+        login.insert("aliasReference".to_owned(), Value::Null);
     }
     value
 }
@@ -345,10 +333,7 @@ fn production_reference_schema_refines_the_formal_contract() {
         .collect::<String>();
     assert_eq!(model_sha256, vectors.model_sha256);
     assert_eq!(vectors.reference_schema.version, ALIAS_REFERENCE_VERSION);
-    assert_eq!(
-        vectors.reference_schema.vault_field_name,
-        ALIAS_REFERENCE_FIELD_NAME
-    );
+    assert_eq!(vectors.reference_schema.login_member_name, "aliasReference");
 
     for vector in &vectors.reference_vectors {
         let provider = identity(select_identity(&vectors, &vector.identity));
