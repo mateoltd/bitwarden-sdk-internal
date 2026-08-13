@@ -1,6 +1,7 @@
 extern crate console_error_panic_hook;
 use std::{fmt::Display, sync::Arc};
 
+use bitwarden_alias::{AliasClientExt as _, AliasClientSettings, AliasError};
 use bitwarden_core::{ClientSettings, key_management::state_bridge::StateBridgeClient};
 use bitwarden_crypto_sync_handler::CryptoSyncHandlerClient;
 use bitwarden_error::bitwarden_error;
@@ -107,6 +108,11 @@ impl PasswordManagerClient {
     /// Constructs a specific client for generating passwords and passphrases
     pub fn generator(&self) -> GeneratorClient {
         self.0.generator()
+    }
+
+    /// Creates a SimpleLogin alias lifecycle client.
+    pub fn aliases(&self, settings: AliasClientSettings) -> Result<crate::AliasClient, AliasError> {
+        self.0.0.aliases(settings).map(crate::AliasClient::from)
     }
 
     /// Exporter related operations.
