@@ -1,3 +1,5 @@
+use std::fmt;
+
 use bitwarden_crypto::EFF_LONG_WORD_LIST;
 use bitwarden_error::bitwarden_error;
 use rand::{Rng, RngExt, distr::Distribution, seq::IndexedRandom};
@@ -26,7 +28,7 @@ pub enum UsernameError {
     Reqwest(#[from] reqwest::Error),
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
@@ -37,7 +39,19 @@ pub enum AppendType {
     WebsiteName { website: String },
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+impl fmt::Debug for AppendType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Random => formatter.write_str("Random"),
+            Self::WebsiteName { .. } => formatter
+                .debug_struct("WebsiteName")
+                .field("website", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[cfg_attr(
@@ -75,8 +89,43 @@ pub enum ForwarderServiceType {
     },
 }
 
+impl fmt::Debug for ForwarderServiceType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddyIo { domain, .. } => formatter
+                .debug_struct("AddyIo")
+                .field("api_token", &"[REDACTED]")
+                .field("domain", domain)
+                .field("base_url", &"[REDACTED]")
+                .finish(),
+            Self::DuckDuckGo { .. } => formatter
+                .debug_struct("DuckDuckGo")
+                .field("token", &"[REDACTED]")
+                .finish(),
+            Self::Firefox { .. } => formatter
+                .debug_struct("Firefox")
+                .field("api_token", &"[REDACTED]")
+                .finish(),
+            Self::Fastmail { .. } => formatter
+                .debug_struct("Fastmail")
+                .field("api_token", &"[REDACTED]")
+                .finish(),
+            Self::ForwardEmail { domain, .. } => formatter
+                .debug_struct("ForwardEmail")
+                .field("api_token", &"[REDACTED]")
+                .field("domain", domain)
+                .finish(),
+            Self::SimpleLogin { .. } => formatter
+                .debug_struct("SimpleLogin")
+                .field("api_key", &"[REDACTED]")
+                .field("base_url", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
 #[allow(missing_docs)]
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[cfg_attr(
@@ -115,6 +164,36 @@ pub enum UsernameGeneratorRequest {
         /// This is not used in all services, and is only used for display purposes
         website: Option<String>,
     },
+}
+
+impl fmt::Debug for UsernameGeneratorRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Word {
+                capitalize,
+                include_number,
+            } => formatter
+                .debug_struct("Word")
+                .field("capitalize", capitalize)
+                .field("include_number", include_number)
+                .finish(),
+            Self::Subaddress { r#type, .. } => formatter
+                .debug_struct("Subaddress")
+                .field("type", r#type)
+                .field("email", &"[REDACTED]")
+                .finish(),
+            Self::Catchall { r#type, .. } => formatter
+                .debug_struct("Catchall")
+                .field("type", r#type)
+                .field("domain", &"[REDACTED]")
+                .finish(),
+            Self::Forwarded { service, website } => formatter
+                .debug_struct("Forwarded")
+                .field("service", service)
+                .field("website", &website.as_ref().map(|_| "[REDACTED]"))
+                .finish(),
+        }
+    }
 }
 
 impl ForwarderServiceType {
@@ -284,5 +363,34 @@ mod tests {
             "test.com".into(),
         );
         assert_eq!(user, "bitwarden.com@test.com");
+    }
+
+    #[test]
+    fn generator_request_debug_redacts_credentials_and_user_inputs() {
+        let forwarded = UsernameGeneratorRequest::Forwarded {
+            service: ForwarderServiceType::SimpleLogin {
+                api_key: "token-that-must-not-render".into(),
+                base_url: "https://provider.test/private-base-path".into(),
+            },
+            website: Some("hostname-that-must-not-render.example".into()),
+        };
+        let subaddress = UsernameGeneratorRequest::Subaddress {
+            r#type: AppendType::WebsiteName {
+                website: "append-hostname-that-must-not-render.example".into(),
+            },
+            email: "mailbox-that-must-not-render@example.test".into(),
+        };
+        let rendered = format!("{forwarded:?} {subaddress:?}");
+
+        for private_value in [
+            "token-that-must-not-render",
+            "private-base-path",
+            "hostname-that-must-not-render.example",
+            "append-hostname-that-must-not-render.example",
+            "mailbox-that-must-not-render@example.test",
+        ] {
+            assert!(!rendered.contains(private_value));
+        }
+        assert!(rendered.contains("[REDACTED]"));
     }
 }

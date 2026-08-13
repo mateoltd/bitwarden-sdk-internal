@@ -111,6 +111,22 @@ impl GeneratorClient {
     pub async fn username(&self, input: UsernameGeneratorRequest) -> Result<String, UsernameError> {
         username(input, self.client.internal.get_http_client()).await
     }
+
+    /// Creates a SimpleLogin alias while preserving its provider-assigned identity and complete
+    /// lifecycle data.
+    ///
+    /// This is the first-class counterpart to [`Self::username`] with
+    /// [`UsernameGeneratorRequest::Forwarded`]. The established forwarded-username API continues
+    /// to return only the alias address for public compatibility. This API returns the alias
+    /// unchanged so callers can retain its stable identifier for later lifecycle operations.
+    #[cfg(feature = "alias")]
+    pub async fn simplelogin_alias(
+        &self,
+        settings: bitwarden_alias::AliasClientSettings,
+        website: Option<bitwarden_sensitive_value::SensitiveString>,
+    ) -> Result<bitwarden_alias::Alias, bitwarden_alias::AliasError> {
+        crate::username_forwarders::simplelogin::generate_alias(settings, website).await
+    }
 }
 
 #[allow(missing_docs)]
