@@ -3,7 +3,7 @@ name: Alias SDK upstream drift
 on:
   push:
     branches:
-      - "integration/alias-platform"
+      - "integration/public-alias-sdk"
   workflow_dispatch:
     inputs:
       sdk-upstream-ref:
