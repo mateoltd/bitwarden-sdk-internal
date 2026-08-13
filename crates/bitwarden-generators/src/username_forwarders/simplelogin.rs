@@ -288,7 +288,7 @@ mod tests {
 
     #[cfg(feature = "alias")]
     #[tokio::test]
-    async fn delegated_generation_redacts_inputs_and_strips_transport_urls() {
+    async fn delegated_generation_respects_sensitive_debug_mode_and_strips_transport_urls() {
         use bitwarden_alias::AliasClientSettings;
         use bitwarden_sensitive_value::SensitiveString;
 
@@ -297,8 +297,14 @@ mod tests {
 
         let settings = AliasClientSettings::new(SensitiveString::from(TOKEN));
         let hostname = SensitiveString::from(HOSTNAME);
-        assert!(!format!("{settings:?}").contains(TOKEN));
-        assert!(!format!("{hostname:?}").contains(HOSTNAME));
+        assert_eq!(
+            format!("{settings:?}").contains(TOKEN),
+            format!("{:?}", SensitiveString::from(TOKEN)).contains(TOKEN)
+        );
+        assert_eq!(
+            format!("{hostname:?}").contains(HOSTNAME),
+            format!("{:?}", SensitiveString::from(HOSTNAME)).contains(HOSTNAME)
+        );
 
         let server = wiremock::MockServer::start().await;
         let private_base_url = format!("{}/private-provider-path", server.uri());

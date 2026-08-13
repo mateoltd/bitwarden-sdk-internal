@@ -351,7 +351,10 @@ async fn supports_options_domains_and_mailboxes() {
         .expect("options should succeed");
     assert!(options.can_create);
     assert_eq!(options.suffixes.len(), 1);
-    assert_eq!(options.suffixes[0].signed_suffix.to_string(), "[REDACTED]");
+    assert_eq!(
+        options.suffixes[0].signed_suffix.to_string(),
+        SensitiveString::from(".words@sl.test.signature").to_string()
+    );
 
     let recommendation = client
         .get_alias_recommendation(&hostname)
@@ -1069,12 +1072,15 @@ async fn strips_urls_and_secrets_from_transport_error_display_and_debug() {
 }
 
 #[test]
-fn settings_and_sensitive_models_redact_secrets() {
+fn settings_and_sensitive_models_respect_sensitive_debug_mode() {
     let private_base_url = "https://provider.example/private-instance-path/";
     let settings = AliasClientSettings::new(SensitiveString::from(TOKEN))
         .with_base_url(private_base_url.to_owned());
     let rendered = format!("{settings:?}");
-    assert!(!rendered.contains(TOKEN));
+    assert_eq!(
+        rendered.contains(TOKEN),
+        format!("{:?}", SensitiveString::from(TOKEN)).contains(TOKEN)
+    );
     assert!(!rendered.contains(private_base_url));
     assert!(!rendered.contains("private-instance-path"));
     assert!(rendered.contains("[REDACTED]"));

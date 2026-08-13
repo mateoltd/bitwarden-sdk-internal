@@ -1205,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_round_trips_without_rendering_sensitive_values() {
+    fn reference_round_trips_and_respects_sensitive_debug_mode() {
         let provider = provider();
         let alias = alias(41, "private-alias@example.test".to_owned());
         let reference = AliasReference::new(&provider, &alias).expect("reference should construct");
@@ -1219,7 +1219,11 @@ mod tests {
                 "{{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"{CONNECTION_ID}\",\"aliasId\":41,\"address\":\"private-alias@example.test\"}}"
             )
         );
-        assert!(!format!("{reference:?}").contains("private-alias"));
+        assert_eq!(
+            format!("{reference:?}").contains("private-alias"),
+            format!("{:?}", SensitiveString::from("private-alias@example.test"))
+                .contains("private-alias")
+        );
         assert!(
             AliasProviderIdentity::simplelogin("https://user:password@example.test", CONNECTION_ID)
                 .is_err()
