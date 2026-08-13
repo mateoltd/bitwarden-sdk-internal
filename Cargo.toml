@@ -22,6 +22,7 @@ keywords = ["bitwarden"]
 
 # External crates that are expected to maintain a consistent version across all crates
 async-trait = ">=0.1.80, <0.2"
+bitwarden-alias = { path = "crates/bitwarden-alias", version = "=3.0.0" }
 bitwarden-api-api = { path = "crates/bitwarden-api-api", version = "=3.0.0" }
 bitwarden-api-base = { path = "crates/bitwarden-api-base", version = "=3.0.0" }
 bitwarden-api-identity = { path = "crates/bitwarden-api-identity", version = "=3.0.0" }
