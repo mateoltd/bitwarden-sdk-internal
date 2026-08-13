@@ -1,0 +1,110 @@
+name: bitwarden-simplelogin-lab
+
+x-simplelogin: &simplelogin
+  image: bitwarden-simplelogin-lab:${SIMPLELOGIN_COMMIT:?set by lab.sh}
+  platform: linux/amd64
+  build:
+    context: ${SIMPLELOGIN_APP_DIR:?set by lab.sh}
+    dockerfile: ${SIMPLELOGIN_DOCKERFILE:?prepared by lab.sh}
+  environment:
+    URL: http://127.0.0.1:${SIMPLELOGIN_HTTP_PORT:-17777}
+    EMAIL_DOMAIN: sl.lan
+    ALIAS_DOMAINS: '["sl.lan", "aliases.sl.lan"]'
+    SUPPORT_EMAIL: support@sl.lan
+    EMAIL_SERVERS_WITH_PRIORITY: '[(10, "mailpit.")]'
+    DB_URI: postgresql://simplelogin:simplelogin@postgres:5432/simplelogin
+    DB_CONN_NAME: bitwarden-simplelogin-lab
+    PYTHONPATH: /code
+    FLASK_SECRET: bitwarden-simplelogin-local-only
+    LOCAL_FILE_UPLOAD: "true"
+    DISABLE_ALIAS_SUFFIX: "true"
+    DISABLE_ONBOARDING: "true"
+    DISABLE_REGISTRATION: "true"
+    DISABLE_RATE_LIMIT: "true"
+    WORDS_FILE_PATH: local_data/test_words.txt
+    MEM_STORE_URI: redis://redis:6379/0
+    POSTFIX_SERVER: mailpit
+    POSTFIX_PORT: "1025"
+    POSTFIX_CONNECT_TIMEOUT: "2"
+    POSTFIX_TIMEOUT: "5"
+    PARTNER_API_TOKEN_SECRET: bitwarden-simplelogin-partner-local-only
+    RECOVERY_CODE_HMAC_SECRET: bitwarden-simplelogin-recovery-local-only
+    ALIAS_TRANSFER_TOKEN_SECRET: bitwarden-simplelogin-transfer-local-only
+    VERP_EMAIL_SECRET: bitwarden-simplelogin-verp-local-only
+  volumes:
+    - simplelogin_uploads:/code/static/upload
+    - ./seed.py:/lab/seed.py:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16.14-alpine3.23@sha256:42b8b8b29c8a4e933d88943e5b03001a78794905cf786e6e7634e9f2abd5a0d3
+    environment:
+      POSTGRES_DB: simplelogin
+      POSTGRES_USER: simplelogin
+      POSTGRES_PASSWORD: simplelogin
+    volumes:
+      - simplelogin_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simplelogin -d simplelogin"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4.9-alpine3.21@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    <<: *simplelogin
+    command: ["gunicorn", "wsgi:app", "-b", "0.0.0.0:7777", "-w", "1", "--timeout", "15"]
+    ports:
+      - 127.0.0.1:${SIMPLELOGIN_HTTP_PORT:-17777}:7777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:7777/health', timeout=2).read()
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
+  mailpit:
+    profiles: ["mail"]
+    image: axllent/mailpit:v1.30.0@sha256:0059ef81e492a7192af3816281eed6859eb078bd7bdc58b76757c13e10e53a7d
+    ports:
+      - 127.0.0.1:${SIMPLELOGIN_MAILPIT_HTTP_PORT:-18025}:8025
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  email:
+    <<: *simplelogin
+    profiles: ["mail"]
+    command: ["python", "email_handler.py"]
+    ports:
+      - 127.0.0.1:${SIMPLELOGIN_SMTP_PORT:-20381}:20381
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+
+volumes:
+  simplelogin_postgres:
+  simplelogin_uploads:
