@@ -62,6 +62,30 @@ xcodebuild -create-xcframework \
   -headers ./tmp/Headers \
   -output ./BitwardenFFI.xcframework
 
+# xcodebuild does not guarantee the order of AvailableLibraries. Canonicalize the
+# two validated slices so byte-for-byte release rebuilds cannot differ only by
+# plist array order.
+XCFRAMEWORK_PLIST="./BitwardenFFI.xcframework/Info.plist"
+DEVICE_IDENTIFIER="ios-arm64"
+SIMULATOR_IDENTIFIER="ios-arm64_x86_64-simulator"
+FIRST_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :AvailableLibraries:0:LibraryIdentifier' "$XCFRAMEWORK_PLIST")"
+SECOND_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :AvailableLibraries:1:LibraryIdentifier' "$XCFRAMEWORK_PLIST")"
+case "$FIRST_IDENTIFIER:$SECOND_IDENTIFIER" in
+  "$DEVICE_IDENTIFIER:$SIMULATOR_IDENTIFIER")
+    ;;
+  "$SIMULATOR_IDENTIFIER:$DEVICE_IDENTIFIER")
+    /usr/libexec/PlistBuddy -c 'Copy :AvailableLibraries:0 :CanonicalLibrary' "$XCFRAMEWORK_PLIST"
+    /usr/libexec/PlistBuddy -c 'Delete :AvailableLibraries:0' "$XCFRAMEWORK_PLIST"
+    /usr/libexec/PlistBuddy -c 'Copy :CanonicalLibrary :AvailableLibraries:1' "$XCFRAMEWORK_PLIST"
+    /usr/libexec/PlistBuddy -c 'Delete :CanonicalLibrary' "$XCFRAMEWORK_PLIST"
+    ;;
+  *)
+    echo "Unexpected XCFramework library identifiers: $FIRST_IDENTIFIER, $SECOND_IDENTIFIER" >&2
+    exit 1
+    ;;
+esac
+plutil -convert xml1 "$XCFRAMEWORK_PLIST"
+
 ../../../scripts/check-oss-artifact-boundary.sh --swift "$PWD"
 
 # Cleanup temporary files
