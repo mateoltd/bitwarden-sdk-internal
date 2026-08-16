@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/mateoltd/ios.git",
+  "branch": "feat/first-class-aliases",
+  "commit": "736a85b5d3f2afbdb46b61b7698ebd0828e7481d",
+  "currentSdkSwift": {
+    "repository": "https://github.com/mateoltd/sdk-swift",
+    "commit": "858d31ac18214e47c5264fc73da8c9885565bda0"
+  },
+  "requiredArtifact": "swift",
+  "aliasReferenceSchemaVersion": 1,
+  "integrationStatus": "requires-provider-neutral-repin"
+}

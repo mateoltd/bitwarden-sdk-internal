@@ -30,7 +30,12 @@
     {
       "id": "current-reference-schema",
       "platforms": ["typescriptWasm", "swift", "kotlinJvm", "android"],
-      "instruction": "Persist only alias reference schema version 1 values created and parsed by the SDK. Reject missing, zero, malformed, version 2, and unknown future versions; do not migrate them or infer bindings from usernames or addresses."
+      "instruction": "Persist only the SDK's canonical alias reference schema version 1: version, connectionId, opaque bounded aliasId, and canonical address. Reject missing, zero, malformed, provider-specific, and unknown future shapes; do not migrate old unreleased values or infer bindings from usernames or addresses."
+    },
+    {
+      "id": "encrypted-connection-metadata",
+      "platforms": ["typescriptWasm", "swift", "kotlinJvm", "android"],
+      "instruction": "Store adapter identifiers, endpoints, labels, capabilities, and credentials only in the encrypted connection record. Never copy them into alias references, vault bindings, journals, telemetry, or logs."
     },
     {
       "id": "provider-pin",

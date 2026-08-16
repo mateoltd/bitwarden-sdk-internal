@@ -7,6 +7,7 @@ FORBIDDEN_EXPORTS='CommercialPasswordManagerClient|CommercialVaultClient|PamClie
 FORBIDDEN_ALIAS_MIGRATION_EXPORTS='migrate_alias_reference|migrate_cipher_alias_reference|migrateAliasReference|migrateCipherAliasReference|AliasReferenceMigration|AliasCipherMigration'
 FORBIDDEN_ALIAS_DEVELOPMENT_EXPORTS='AliasReferenceV2|alias_reference_v2|aliasReferenceV2|LegacyAliasReference|LEGACY_ALIAS_REFERENCE_VERSION'
 FORBIDDEN_ALIAS_EXPORTS="$FORBIDDEN_ALIAS_MIGRATION_EXPORTS|$FORBIDDEN_ALIAS_DEVELOPMENT_EXPORTS"
+FORBIDDEN_ALIAS_GENERATED_EXPORTS='ForwarderServiceType|SimpleLoginAdapter(Settings)?|simple[_-]?login'
 
 fail() {
     echo "OSS artifact boundary check failed: $*" >&2
@@ -66,16 +67,24 @@ check_licensed_dependency_graph() {
     done
 }
 
-check_hardened_alias_generator() {
+check_provider_neutral_alias_boundary() {
     local package="$1"
     local features
+    local tree
 
     features="$(
         cd "$REPOSITORY_ROOT"
         cargo tree --locked --package "$package" --edges features
     )"
-    grep -Fq 'bitwarden-generators feature "alias"' <<<"$features" \
-        || fail "$package does not route SimpleLogin generation through the hardened alias client"
+    tree="$(
+        cd "$REPOSITORY_ROOT"
+        cargo tree --locked --package "$package" --edges normal,build --prefix none --format '{p}'
+    )"
+    grep -Eq '^bitwarden-alias v' <<<"$tree" \
+        || fail "$package does not contain the provider-neutral alias contract"
+    if grep -Fq 'bitwarden-generators feature "alias"' <<<"$features"; then
+        fail "$package still exposes the removed credential-bearing forwarded generator"
+    fi
 }
 
 check_paths() {
@@ -99,11 +108,49 @@ check_generated_exports() {
 
     forbidden="$(
         find "$path" -type f \( -name '*.d.ts' -o -name '*.js' -o -name '*.swift' -o -name '*.kt' \) \
-            -exec grep -El "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
+            -exec grep -Eil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS|$FORBIDDEN_ALIAS_GENERATED_EXPORTS" {} + 2>/dev/null || true
     )"
     if [[ -n "$forbidden" ]]; then
         printf '%s\n' "$forbidden" >&2
         fail "$path exposes a commercial-only or removed alias-migration API"
+    fi
+}
+
+check_native_symbols() {
+    local path="$1"
+    local binary
+    local forbidden=""
+    local symbols
+
+    command -v nm >/dev/null 2>&1 || fail "nm is required to inspect native artifact symbols"
+    while IFS= read -r -d '' binary; do
+        case "$(file -b "$binary")" in
+            *archive*|*Mach-O*|*ELF*) ;;
+            *) continue ;;
+        esac
+        symbols="$(nm -g "$binary" 2>/dev/null || true)"
+        if grep -Eiq "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" <<<"$symbols"; then
+            forbidden+="$binary"$'\n'
+        fi
+    done < <(find "$path" -type f -print0)
+    if [[ -n "$forbidden" ]]; then
+        printf '%s' "$forbidden" >&2
+        fail "$path contains a commercial-only or removed alias-migration native symbol"
+    fi
+}
+
+check_jvm_class_names() {
+    local path="$1"
+    local forbidden
+
+    forbidden="$(
+        find "$path" -type f -name '*.class' -print \
+            | grep -Ei "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" \
+            || true
+    )"
+    if [[ -n "$forbidden" ]]; then
+        printf '%s\n' "$forbidden" >&2
+        fail "$path contains a commercial-only or removed alias-migration JVM class"
     fi
 }
 
@@ -172,14 +219,7 @@ check_swift() {
         || fail "$path/LICENSE_GPL.txt is not the GPL text"
     check_paths "$path/BitwardenFFI.xcframework"
     check_generated_exports "$path/Sources/BitwardenSdk"
-    forbidden="$(
-        find "$path/BitwardenFFI.xcframework" -type f \
-            -exec grep -aEil "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
-    )"
-    if [[ -n "$forbidden" ]]; then
-        printf '%s\n' "$forbidden" >&2
-        fail "$path contains a commercial-only or removed alias-migration Swift symbol"
-    fi
+    check_native_symbols "$path/BitwardenFFI.xcframework"
 }
 
 check_kotlin() {
@@ -210,14 +250,8 @@ check_kotlin() {
     check_paths "$temporary_dir"
     grep -q 'GNU GENERAL PUBLIC LICENSE' "$license_path" \
         || fail "$aar does not contain the GPL text"
-    forbidden="$(
-        find "$temporary_dir" -type f \( -name '*.class' -o -name '*.so' \) \
-            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
-    )"
-    if [[ -n "$forbidden" ]]; then
-        printf '%s\n' "$forbidden" >&2
-        fail "$aar contains a commercial-only or removed alias-migration API or native symbol"
-    fi
+    check_jvm_class_names "$temporary_dir"
+    check_native_symbols "$temporary_dir"
     rm -rf "$temporary_dir"
     trap - RETURN
 }
@@ -239,22 +273,15 @@ check_kotlin_host() {
     grep -q 'GNU GENERAL PUBLIC LICENSE' "$temporary_dir/META-INF/LICENSE_GPL.txt" \
         || fail "$jar does not contain the GPL text"
     check_paths "$temporary_dir"
-    forbidden="$(
-        find "$temporary_dir" -type f -name '*.class' \
-            -exec grep -aEl "$FORBIDDEN_EXPORTS|$FORBIDDEN_ALIAS_EXPORTS" {} + 2>/dev/null || true
-    )"
-    if [[ -n "$forbidden" ]]; then
-        printf '%s\n' "$forbidden" >&2
-        fail "$jar contains a commercial-only or removed alias-migration API"
-    fi
+    check_jvm_class_names "$temporary_dir"
     rm -rf "$temporary_dir"
     trap - RETURN
 }
 
 check_dependency_graph bitwarden-wasm-internal
 check_dependency_graph bitwarden-uniffi
-check_hardened_alias_generator bitwarden-wasm-internal
-check_hardened_alias_generator bitwarden-uniffi
+check_provider_neutral_alias_boundary bitwarden-wasm-internal
+check_provider_neutral_alias_boundary bitwarden-uniffi
 check_licensed_dependency_graph
 
 grep -Eq '"license": "GPL-3.0-only"' \
