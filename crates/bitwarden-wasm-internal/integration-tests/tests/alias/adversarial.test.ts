@@ -1,340 +1,323 @@
-import { AliasClient, SensitiveString } from "@bitwarden/sdk-internal";
-import { readFileSync } from "node:fs";
-import { runInNewContext, runInThisContext } from "node:vm";
+import {
+  Alias,
+  AliasClient,
+  AliasConnection,
+  AliasIdentity,
+  AliasProviderAdapter,
+  AliasProviderCapabilities,
+  SensitiveString,
+} from "@bitwarden/sdk-internal";
 
-type LifecycleTrace = {
-  name: string;
-  aliasId: number;
-  desiredEnabled: boolean;
-  steps: Array<{
-    kind: "get" | "toggle";
-    providerEnabledAfter: boolean;
-    responseEnabled?: boolean;
-  }>;
-  expectedEnabled?: boolean;
-  expectedToggleCount: number;
-};
-
-const conformance = JSON.parse(
-  readFileSync(
-    new URL("../../../../../formal/alias-security/conformance-vectors.json", import.meta.url),
-    "utf8",
-  ),
-) as { lifecycleTraces: LifecycleTrace[] };
-
+const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+const FOREIGN_CONNECTION_ID = "22222222-2222-4222-8222-222222222222";
 const sensitive = (value: string): SensitiveString => value as SensitiveString;
-const token = "wasm-adversarial-token";
-const connectionId = "11111111-1111-4111-8111-111111111111";
 
-const aliasJson = (id: number, enabled: boolean) => ({
-  id,
-  email: `alias-${id}@sl.test`,
-  creation_date: "2026-08-10T10:00:00+00:00",
-  creation_timestamp: 1786356000,
-  enabled,
-  note: null,
-  name: null,
-  nb_forward: 0,
-  nb_block: 0,
-  nb_reply: 0,
-  mailbox: { id: 11, email: "owner@example.test" },
-  mailboxes: [{ id: 11, email: "owner@example.test" }],
-  support_pgp: false,
-  disable_pgp: false,
-  latest_activity: null,
-  pinned: false,
-});
-
-type FetchDispatch = (request: Request) => Promise<Response> | Response | object;
-
-const hostWebGlobals = runInThisContext(
-  "({ fetch, Headers, Request, Response, ReadableStream, ReadableStreamDefaultReader })",
-) as Record<string, unknown>;
-
-const installCrossRealmFetch = (dispatch: FetchDispatch): (() => void) => {
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-  for (const name of Object.keys(hostWebGlobals)) {
-    previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
-  }
-  for (const [name, value] of Object.entries(hostWebGlobals)) {
-    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  }
-  const fetchFromAnotherRealm = runInNewContext("dispatch => request => dispatch(request)")(
-    dispatch,
-  ) as typeof fetch;
-  Object.defineProperty(globalThis, "fetch", {
-    configurable: true,
-    writable: true,
-    value: fetchFromAnotherRealm,
-  });
-
-  return () => {
-    for (const [name, descriptor] of previous) {
-      if (descriptor) {
-        Object.defineProperty(globalThis, name, descriptor);
-      } else {
-        delete (globalThis as unknown as Record<string, unknown>)[name];
-      }
-    }
-  };
+const capabilities: AliasProviderCapabilities = {
+  create: true,
+  list: true,
+  get: true,
+  enableDisable: true,
+  delete: true,
+  createSendReplyIdentity: true,
+  listSendReplyIdentities: true,
+  removeSendReplyIdentity: true,
+  extensions: ["send-reply.block"],
 };
 
-const newClient = () =>
-  new AliasClient({
-    base_url: "https://simplelogin.invalid/",
-    api_token: sensitive(token),
-    connection_id: connectionId,
-  });
-
-type ErrorRenderings = {
-  string: string;
-  message: string;
-  stack: string;
-  json: string;
+const connection: AliasConnection = {
+  version: 1,
+  connectionId: CONNECTION_ID,
+  adapter: { adapterId: "test.adapter", capabilities },
 };
 
-const captureError = async (operation: Promise<unknown>): Promise<ErrorRenderings> => {
-  try {
-    await operation;
-  } catch (error) {
-    const candidate = error as Error;
-    return {
-      string: String(error),
-      message: candidate.message,
-      stack: candidate.stack ?? "",
-      json: JSON.stringify(error),
-    };
-  }
-  throw new Error("operation unexpectedly succeeded");
-};
-
-const renderedError = async (operation: Promise<unknown>): Promise<string> =>
-  Object.values(await captureError(operation)).join("\n");
-
-test("rejects authenticated redirects without replaying or leaking credentials", async () => {
-  let calls = 0;
-  const restore = installCrossRealmFetch((request) => {
-    calls += 1;
-    expect(request.redirect).toBe("manual");
-    expect(request.credentials).toBe("omit");
-    expect(request.headers.get("Authentication")).toBe(token);
-    return new Response(null, {
-      status: 302,
-      headers: { Location: "https://attacker.invalid/capture?secret=redirect-secret" },
-    });
-  });
-  const client = newClient();
-  try {
-    const rendered = await renderedError(client.list_domains());
-    expect(rendered).toContain("redirect rejected");
-    expect(rendered).not.toContain(token);
-    expect(rendered).not.toContain("attacker.invalid");
-    expect(rendered).not.toContain("redirect-secret");
-    expect(calls).toBe(1);
-  } finally {
-    client.free();
-    restore();
-  }
+const identity = (aliasId = "provider/object:7", connectionId = CONNECTION_ID): AliasIdentity => ({
+  version: 1,
+  connectionId,
+  aliasId,
+  address: sensitive("alias@example.test"),
 });
 
-test.each([
-  [200, 512 * 1024],
-  [500, 16 * 1024],
-])("cancels and unlocks oversized streamed HTTP %i responses", async (status, limit) => {
-  let canceled = 0;
-  let stream: ReadableStream<Uint8Array>;
-  const restore = installCrossRealmFetch(() => {
-    stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array(limit + 1));
-      },
-      cancel() {
-        canceled += 1;
-      },
-    });
-    return new Response(stream, {
-      status,
-      headers: { "Content-Type": "application/json" },
-    });
-  });
-  const client = newClient();
-  try {
-    const rendered = await renderedError(client.list_domains());
-    expect(rendered).toContain(`${limit}-byte limit`);
-    expect(rendered).not.toContain(token);
-    expect(canceled).toBe(1);
-    expect(stream!.locked).toBe(false);
-  } finally {
-    client.free();
-    restore();
-  }
+const alias = (aliasIdentity = identity(), lifecycle: Alias["lifecycle"] = "enabled"): Alias => ({
+  identity: aliasIdentity,
+  lifecycle,
+  freshness: "current",
+  consistency: "clean",
+  label: undefined,
+  capabilities,
 });
 
-test("bounds and sanitizes provider errors in every JavaScript rendering", async () => {
-  let calls = 0;
-  const hostile = `failure ${token}\n<script>alert(1)</script>\u001b[31m\u202espoof ${"x".repeat(700)}`;
-  const restore = installCrossRealmFetch(() => {
-    calls += 1;
-    return new Response(JSON.stringify({ error: hostile }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  });
-  const client = newClient();
-  try {
-    const renderings = await captureError(client.list_domains());
-    for (const rendered of Object.values(renderings)) {
-      expect(rendered).not.toContain(token);
-      expect(rendered).not.toContain("<script>");
-      expect(rendered).not.toContain("\u001b");
-      expect(rendered).not.toContain("\u202e");
-    }
-    expect(renderings.message.length).toBeLessThan(700);
-    expect(renderings.string.length).toBeLessThan(750);
-    expect(renderings.json.length).toBeLessThan(750);
-    expect(renderings.stack.length).toBeLessThan(5_000);
-    expect(calls).toBe(1);
-  } finally {
-    client.free();
-    restore();
-  }
+const successfulAdapter = (): AliasProviderAdapter => ({
+  create: async () => ({ status: "success", value: alias() }),
+  list: async () => ({
+    status: "success",
+    value: { aliases: [alias()], nextPageToken: undefined },
+  }),
+  get: async (value) => ({ status: "success", value: alias(value) }),
+  setEnabled: async (value, enabled) => ({
+    status: "success",
+    value: alias(value, enabled ? "enabled" : "disabled"),
+  }),
+  delete: async (value) => ({
+    status: "success",
+    value: { identity: value, deleted: true },
+  }),
+  createSendReplyIdentity: async ({ alias: aliasIdentity, recipient }) => ({
+    status: "success",
+    value: {
+      alias: aliasIdentity,
+      identityId: "reply/object:9",
+      recipient,
+      address: sensitive("reply@example.test"),
+      valid: true,
+      blocked: false,
+    },
+  }),
+  listSendReplyIdentities: async (aliasIdentity) => ({
+    status: "success",
+    value: {
+      identities: [
+        {
+          alias: aliasIdentity,
+          identityId: "reply/object:9",
+          recipient: sensitive("recipient@example.test"),
+          address: sensitive("reply@example.test"),
+          valid: true,
+          blocked: false,
+        },
+      ],
+      nextPageToken: undefined,
+    },
+  }),
+  removeSendReplyIdentity: async () => ({ status: "success", value: null }),
+  setSendReplyBlocked: async (reply, blocked) => ({
+    status: "success",
+    value: { ...reply, blocked },
+  }),
 });
 
-test("rejects malformed JSON and structurally invalid fetch responses", async () => {
-  let malformed = true;
-  const restore = installCrossRealmFetch(() => {
-    if (malformed) {
-      malformed = false;
-      return new Response("{", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    return {};
-  });
-  const client = newClient();
-  try {
-    const invalidJson = await renderedError(client.list_domains());
-    expect(invalidJson).toContain("invalid alias provider response");
-    const invalidFetch = await renderedError(client.list_domains());
-    expect(invalidFetch).toContain("provider response status unavailable");
-    expect(`${invalidJson}\n${invalidFetch}`).not.toContain(token);
-  } finally {
-    client.free();
-    restore();
-  }
-});
+test("executes the complete lifecycle through the injected neutral adapter", async () => {
+  const client = new AliasClient(connection, successfulAdapter());
+  expect(client.connection()).toEqual(connection);
 
-test("surfaces rate limiting without retrying the request", async () => {
-  let calls = 0;
-  const restore = installCrossRealmFetch(() => {
-    calls += 1;
-    return new Response(JSON.stringify({ error: token }), {
-      status: 429,
-      headers: { "Content-Type": "application/json", "Retry-After": "17" },
-    });
-  });
-  const client = newClient();
-  try {
-    const rendered = await renderedError(client.list_domains());
-    expect(rendered).toContain("rate limit reached");
-    expect(rendered).not.toContain(token);
-    expect(calls).toBe(1);
-  } finally {
-    client.free();
-    restore();
-  }
-});
+  const created = await client.create({ hostname: sensitive("example.test") });
+  expect(created.identity.aliasId).toBe("provider/object:7");
+  expect((await client.list({ pageToken: undefined })).aliases).toEqual([created]);
+  expect(await client.get(created.identity)).toEqual(created);
+  expect((await client.set_enabled(created.identity, false)).lifecycle).toBe("disabled");
 
-test("serializes concurrent explicit state changes across the WASM boundary", async () => {
-  let enabled = true;
-  let gets = 0;
-  let toggles = 0;
-  const restore = installCrossRealmFetch(async (request) => {
-    const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/api/aliases/101") {
-      gets += 1;
-      const observed = enabled;
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      return new Response(JSON.stringify(aliasJson(101, observed)), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (request.method === "POST" && url.pathname === "/api/aliases/101/toggle") {
-      toggles += 1;
-      enabled = !enabled;
-      return new Response(JSON.stringify({ enabled }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    return new Response(JSON.stringify({ error: "unexpected request" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+  const reply = await client.create_send_reply_identity({
+    alias: created.identity,
+    recipient: sensitive("recipient@example.test"),
   });
-  const firstClient = newClient();
-  const secondClient = newClient();
-  try {
-    const [first, second] = await Promise.all([
-      firstClient.disable_alias(101n),
-      secondClient.disable_alias(101n),
-    ]);
-    expect(first.enabled).toBe(false);
-    expect(second.enabled).toBe(false);
-    expect(enabled).toBe(false);
-    expect(gets).toBe(3);
-    expect(toggles).toBe(1);
-  } finally {
-    firstClient.free();
-    secondClient.free();
-    restore();
-  }
-});
-
-test("executes the replayed-response formal trace across the WASM boundary", async () => {
-  const trace = conformance.lifecycleTraces.find(
-    (candidate) => candidate.name === "replayed-toggle-responses-require-fresh-read-convergence",
+  expect(reply.identityId).toBe("reply/object:9");
+  expect((await client.list_send_reply_identities(created.identity, undefined)).identities).toEqual(
+    [reply],
   );
-  expect(trace).toBeDefined();
-  let cursor = 0;
-  let providerEnabled = true;
-  let toggles = 0;
-  const restore = installCrossRealmFetch((request) => {
-    const step = trace!.steps[cursor++];
-    const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === `/api/aliases/${trace!.aliasId}`) {
-      expect(step.kind).toBe("get");
-      providerEnabled = step.providerEnabledAfter;
-      return new Response(JSON.stringify(aliasJson(trace!.aliasId, providerEnabled)), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    if (request.method === "POST" && url.pathname === `/api/aliases/${trace!.aliasId}/toggle`) {
-      expect(step.kind).toBe("toggle");
-      toggles += 1;
-      providerEnabled = step.providerEnabledAfter;
-      return new Response(JSON.stringify({ enabled: step.responseEnabled }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    return new Response(JSON.stringify({ error: "unexpected request" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+  const blocked = await client.set_send_reply_blocked(reply, true);
+  expect(blocked).toEqual({ ...reply, blocked: true });
+  await client.remove_send_reply_identity(blocked);
+  expect((await client.delete(created.identity)).deleted).toBe(true);
+  client.free();
+});
+
+test("rejects foreign identities before dispatch", async () => {
+  const adapter = successfulAdapter();
+  const get = adapter.get;
+  let dispatches = 0;
+  adapter.get = async (identity) => {
+    dispatches += 1;
+    return get(identity);
+  };
+  const client = new AliasClient(connection, adapter);
+
+  await expect(
+    client.get(identity("provider/object:7", FOREIGN_CONNECTION_ID)),
+  ).rejects.toMatchObject({
+    name: "permission-denied",
   });
-  const client = newClient();
+  expect(dispatches).toBe(0);
+  client.free();
+});
+
+test("rejects malformed adapter output and never renders provider-owned text", async () => {
+  const secret = "provider-body-secret";
+  const wrongConnection = successfulAdapter();
+  wrongConnection.get = async () => ({
+    status: "success",
+    value: alias(identity("provider/object:7", FOREIGN_CONNECTION_ID)),
+  });
+  const invalidClient = new AliasClient(connection, wrongConnection);
+  await expect(invalidClient.get(identity())).rejects.toMatchObject({ name: "invalid-response" });
+  invalidClient.free();
+
+  const rejected = successfulAdapter();
+  rejected.get = async () => {
+    throw new Error(secret);
+  };
+  const rejectedClient = new AliasClient(connection, rejected);
+  let rendered = "";
   try {
-    const result = await client.set_alias_enabled(BigInt(trace!.aliasId), trace!.desiredEnabled);
-    expect(result.enabled).toBe(trace!.expectedEnabled);
-    expect(providerEnabled).toBe(trace!.expectedEnabled);
-    expect(toggles).toBe(trace!.expectedToggleCount);
-    expect(cursor).toBe(trace!.steps.length);
-  } finally {
-    client.free();
-    restore();
+    await rejectedClient.get(identity());
+  } catch (error) {
+    rendered = `${String(error)}\n${error instanceof Error ? error.stack : ""}`;
   }
+  expect(rendered).toContain("local-security-failure");
+  expect(rendered).not.toContain(secret);
+  rejectedClient.free();
+});
+
+test("maps only the stable callback error taxonomy", async () => {
+  const adapter = successfulAdapter();
+  adapter.get = async () => ({
+    status: "failure",
+    failure: { code: "outcome-unknown", retryAfterSeconds: undefined },
+  });
+  const client = new AliasClient(connection, adapter);
+  await expect(client.get(identity())).rejects.toMatchObject({ name: "outcome-unknown" });
+  client.free();
+});
+
+test("normalizes the only browsing and recipient context before dispatch", async () => {
+  const adapter = successfulAdapter();
+  let observedHostname = "";
+  let observedRecipient = "";
+  adapter.create = async (request) => {
+    observedHostname = request.hostname ?? "";
+    return { status: "success", value: alias() };
+  };
+  adapter.createSendReplyIdentity = async (request) => {
+    observedRecipient = request.recipient;
+    return {
+      status: "success",
+      value: {
+        alias: request.alias,
+        identityId: "reply/object:9",
+        recipient: request.recipient,
+        address: sensitive("reply@example.test"),
+        valid: true,
+        blocked: false,
+      },
+    };
+  };
+  const client = new AliasClient(connection, adapter);
+  const created = await client.create({ hostname: sensitive("  EXAMPLE.TEST. ") });
+  await client.create_send_reply_identity({
+    alias: created.identity,
+    recipient: sensitive(" Recipient@Example.TEST "),
+  });
+  expect(observedHostname).toBe("example.test");
+  expect(observedRecipient).toBe("recipient@example.test");
+  client.free();
+});
+
+test("rejects a changed identity snapshot or provider-owned label in adapter output", async () => {
+  const wrongResource = successfulAdapter();
+  wrongResource.get = async () => ({
+    status: "success",
+    value: alias(identity("provider/object:other")),
+  });
+  const wrongResourceClient = new AliasClient(connection, wrongResource);
+  await expect(wrongResourceClient.get(identity())).rejects.toMatchObject({
+    name: "invalid-response",
+  });
+  wrongResourceClient.free();
+
+  const injectedLabel = successfulAdapter();
+  injectedLabel.get = async () => ({
+    status: "success",
+    value: { ...alias(), label: sensitive("provider-owned-label") },
+  });
+  const injectedLabelClient = new AliasClient(connection, injectedLabel);
+  await expect(injectedLabelClient.get(identity())).rejects.toMatchObject({
+    name: "invalid-response",
+  });
+  injectedLabelClient.free();
+
+  const changedAddress = successfulAdapter();
+  changedAddress.get = async (requested) => ({
+    status: "success",
+    value: alias({ ...requested, address: sensitive("changed@example.test") }),
+  });
+  const changedAddressClient = new AliasClient(connection, changedAddress);
+  await expect(changedAddressClient.get(identity())).rejects.toMatchObject({
+    name: "invalid-response",
+  });
+  changedAddressClient.free();
+});
+
+test("rejects stale or conflicted adapter observations", async () => {
+  const stale = successfulAdapter();
+  stale.get = async (requested) => ({
+    status: "success",
+    value: { ...alias(requested), freshness: "stale" },
+  });
+  const staleClient = new AliasClient(connection, stale);
+  await expect(staleClient.get(identity())).rejects.toMatchObject({ name: "invalid-response" });
+  staleClient.free();
+
+  const conflicted = successfulAdapter();
+  conflicted.list = async () => ({
+    status: "success",
+    value: {
+      aliases: [{ ...alias(), consistency: "conflicted" }],
+      nextPageToken: undefined,
+    },
+  });
+  const conflictedClient = new AliasClient(connection, conflicted);
+  await expect(conflictedClient.list({ pageToken: undefined })).rejects.toMatchObject({
+    name: "invalid-response",
+  });
+  conflictedClient.free();
+});
+
+test("checks optional capability before block dispatch", async () => {
+  const baselineCapabilities = { ...capabilities, extensions: [] };
+  const baselineConnection: AliasConnection = {
+    ...connection,
+    adapter: { ...connection.adapter, capabilities: baselineCapabilities },
+  };
+  const adapter = successfulAdapter();
+  let dispatches = 0;
+  adapter.setSendReplyBlocked = async (reply, blocked) => {
+    dispatches += 1;
+    return { status: "success", value: { ...reply, blocked } };
+  };
+  const client = new AliasClient(baselineConnection, adapter);
+  await expect(
+    client.set_send_reply_blocked(
+      {
+        alias: identity(),
+        identityId: "reply/object:9",
+        recipient: sensitive("recipient@example.test"),
+        address: sensitive("reply@example.test"),
+        valid: true,
+        blocked: undefined,
+      },
+      true,
+    ),
+  ).rejects.toMatchObject({ name: "capability-unsupported" });
+  expect(dispatches).toBe(0);
+  client.free();
+});
+
+test("rejects unbounded callback retry metadata", async () => {
+  const adapter = successfulAdapter();
+  adapter.get = async () => ({
+    status: "failure",
+    failure: { code: "rate-limited", retryAfterSeconds: 86_401 },
+  });
+  const client = new AliasClient(connection, adapter);
+  await expect(client.get(identity())).rejects.toMatchObject({ name: "invalid-response" });
+  client.free();
+
+  const misplaced = successfulAdapter();
+  misplaced.get = async () => ({
+    status: "failure",
+    failure: { code: "permission-denied", retryAfterSeconds: 1 },
+  });
+  const misplacedClient = new AliasClient(connection, misplaced);
+  await expect(misplacedClient.get(identity())).rejects.toMatchObject({
+    name: "invalid-response",
+  });
+  misplacedClient.free();
 });
