@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use bitwarden_alias::{
-    Alias, AliasCipherMutationResult, AliasClientSettings, AliasCreationOptions, AliasDomain,
-    AliasError, AliasFilter, AliasId, AliasPage, AliasProviderIdentity, AliasRecommendation,
-    AliasReconciliationApplyOutput, AliasReconciliationError, AliasReconciliationPlan,
-    AliasReference, AliasReferenceError, AliasState, ContactId, ContactState,
-    CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
-    DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, MailboxId, ReverseAlias,
-    ReverseAliasPage, SearchAliasesRequest,
+    Alias, AliasCipherMutationResult, AliasConnection, AliasError, AliasErrorCode, AliasIdentity,
+    AliasJournal, AliasJournalState, AliasPage, AliasReconciliationApplyOutput,
+    AliasReconciliationError, AliasReconciliationPlan, AliasReference, AliasReferenceError,
+    CreateAliasRequest, CreateSendReplyIdentityRequest, DeleteAliasResult, ListAliasesRequest,
+    SendReplyIdentity, SendReplyIdentityPage,
     apply_alias_reconciliation_owned as core_apply_alias_reconciliation,
     bind_alias_reference as core_bind_alias_reference,
+    clear_alias_reference_if_username_changed as core_clear_alias_reference_if_username_changed,
     create_alias_reference as core_create_alias_reference,
     parse_alias_reference as core_parse_alias_reference,
     plan_alias_reconciliation as core_plan_alias_reconciliation,
@@ -15,101 +17,327 @@ use bitwarden_alias::{
 };
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_vault::CipherView;
-use serde::Deserialize;
-use tsify::Tsify;
+use js_sys::{Array, Function, Promise, Reflect};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use tsify::serde_wasm_bindgen;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
 
-/// An explicit nullable text update for lifecycle fields where omission means "leave unchanged".
-#[derive(Deserialize, Tsify)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[tsify(from_wasm_abi)]
-pub enum OptionalSensitiveStringUpdate {
-    /// Clear the existing value.
-    Clear,
-    /// Replace the existing value.
-    Set {
-        /// New sensitive value.
-        value: SensitiveString,
-    },
+#[wasm_bindgen(typescript_custom_section)]
+const ALIAS_ADAPTER_TYPES: &str = r#"
+/** A sanitized adapter failure. Provider bodies, endpoints, and credentials are forbidden. */
+export interface AliasAdapterFailure {
+  code: AliasErrorCode;
+  retryAfterSeconds?: number;
 }
 
-impl OptionalSensitiveStringUpdate {
-    fn into_core(self) -> Option<SensitiveString> {
-        match self {
-            Self::Clear => None,
-            Self::Set { value } => Some(value),
-        }
+export type AliasAdapterResult<T> =
+  | { status: "success"; value: T }
+  | { status: "failure"; failure: AliasAdapterFailure };
+
+/**
+ * Provider-neutral lifecycle SPI implemented by the host application.
+ * Connection secrets and provider-native transport remain private to this object.
+ */
+export interface AliasProviderAdapter {
+  create(request: CreateAliasRequest): Promise<AliasAdapterResult<Alias>>;
+  list(request: ListAliasesRequest): Promise<AliasAdapterResult<AliasPage>>;
+  get(identity: AliasIdentity): Promise<AliasAdapterResult<Alias>>;
+  setEnabled(identity: AliasIdentity, enabled: boolean): Promise<AliasAdapterResult<Alias>>;
+  delete(identity: AliasIdentity): Promise<AliasAdapterResult<DeleteAliasResult>>;
+  createSendReplyIdentity(
+    request: CreateSendReplyIdentityRequest,
+  ): Promise<AliasAdapterResult<SendReplyIdentity>>;
+  listSendReplyIdentities(
+    identity: AliasIdentity,
+    pageToken?: string,
+  ): Promise<AliasAdapterResult<SendReplyIdentityPage>>;
+  removeSendReplyIdentity(identity: SendReplyIdentity): Promise<AliasAdapterResult<null>>;
+  setSendReplyBlocked(
+    identity: SendReplyIdentity,
+    blocked: boolean,
+  ): Promise<AliasAdapterResult<SendReplyIdentity>>;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "AliasProviderAdapter")]
+    pub type JsAliasProviderAdapter;
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WasmAliasAdapterFailure {
+    code: AliasErrorCode,
+    retry_after_seconds: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
+enum WasmAliasAdapterResult<T> {
+    Success { value: T },
+    Failure { failure: WasmAliasAdapterFailure },
+}
+
+fn map_adapter_failure(failure: WasmAliasAdapterFailure) -> AliasError {
+    if failure.retry_after_seconds.is_some_and(|value| {
+        failure.code != AliasErrorCode::RateLimited
+            || u64::from(value) > bitwarden_alias::MAX_RETRY_AFTER_SECONDS
+    }) {
+        return AliasError::InvalidResponse;
+    }
+    match failure.code {
+        AliasErrorCode::VaultLocked => AliasError::VaultLocked,
+        AliasErrorCode::ConnectionMissing => AliasError::ConnectionMissing,
+        AliasErrorCode::AuthenticationRejected => AliasError::AuthenticationRejected,
+        AliasErrorCode::PermissionDenied => AliasError::PermissionDenied,
+        AliasErrorCode::CapabilityUnsupported => AliasError::CapabilityUnsupported,
+        AliasErrorCode::InvalidInput => AliasError::InvalidInput,
+        AliasErrorCode::NotFound => AliasError::NotFound,
+        AliasErrorCode::QuotaExhausted => AliasError::QuotaExhausted,
+        AliasErrorCode::RateLimited => AliasError::RateLimited {
+            retry_after_seconds: failure.retry_after_seconds.map(u64::from),
+        },
+        AliasErrorCode::Offline => AliasError::Offline,
+        AliasErrorCode::Timeout => AliasError::Timeout,
+        AliasErrorCode::ServiceUnavailable => AliasError::ServiceUnavailable,
+        AliasErrorCode::InvalidResponse => AliasError::InvalidResponse,
+        AliasErrorCode::OutcomeUnknown => AliasError::OutcomeUnknown,
+        AliasErrorCode::SyncConflict => AliasError::SyncConflict,
+        AliasErrorCode::LocalSecurityFailure => AliasError::LocalSecurityFailure,
     }
 }
 
-/// Alias mutation input with unambiguous set, clear, and leave-unchanged semantics.
-#[derive(Deserialize, Tsify)]
-#[tsify(from_wasm_abi, large_number_types_as_bigints)]
-pub struct AliasUpdateRequest {
-    /// Set or clear the private note; omission leaves it unchanged.
-    pub note: Option<OptionalSensitiveStringUpdate>,
-    /// Set or clear the display name; omission leaves it unchanged.
-    pub name: Option<OptionalSensitiveStringUpdate>,
-    /// Replace all forwarding mailboxes; omission leaves them unchanged.
-    pub mailbox_ids: Option<Vec<MailboxId>>,
-    /// Enable or disable PGP; omission leaves it unchanged.
-    pub disable_pgp: Option<bool>,
-    /// Pin or unpin the alias; omission leaves it unchanged.
-    pub pinned: Option<bool>,
+struct WasmAliasProviderAdapter {
+    inner: JsValue,
+    connection: AliasConnection,
 }
 
-impl From<AliasUpdateRequest> for bitwarden_alias::UpdateAliasRequest {
-    fn from(value: AliasUpdateRequest) -> Self {
-        Self {
-            note: value.note.map(OptionalSensitiveStringUpdate::into_core),
-            name: value.name.map(OptionalSensitiveStringUpdate::into_core),
-            mailbox_ids: value.mailbox_ids,
-            disable_pgp: value.disable_pgp,
-            pinned: value.pinned,
+impl WasmAliasProviderAdapter {
+    async fn call<T: DeserializeOwned>(
+        &self,
+        method_name: &str,
+        arguments: &[JsValue],
+    ) -> Result<T, AliasError> {
+        let method = Reflect::get(&self.inner, &JsValue::from_str(method_name))
+            .map_err(|_| AliasError::LocalSecurityFailure)?;
+        let function = method
+            .dyn_ref::<Function>()
+            .ok_or(AliasError::LocalSecurityFailure)?;
+        let args = Array::new_with_length(arguments.len() as u32);
+        for (index, argument) in arguments.iter().enumerate() {
+            args.set(index as u32, argument.clone());
         }
+        let returned = function
+            .apply(&self.inner, &args)
+            .map_err(|_| AliasError::LocalSecurityFailure)?;
+        let settled = JsFuture::from(Promise::resolve(&returned))
+            .await
+            .map_err(|_| AliasError::LocalSecurityFailure)?;
+        let result: WasmAliasAdapterResult<T> =
+            serde_wasm_bindgen::from_value(settled).map_err(|_| AliasError::InvalidResponse)?;
+        match result {
+            WasmAliasAdapterResult::Success { value } => Ok(value),
+            WasmAliasAdapterResult::Failure { failure } => Err(map_adapter_failure(failure)),
+        }
+    }
+
+    fn argument<T: Serialize>(value: &T) -> Result<JsValue, AliasError> {
+        serde_wasm_bindgen::to_value(value).map_err(|_| AliasError::LocalSecurityFailure)
     }
 }
 
-/// Custom-domain mutation input with unambiguous display-name clearing.
-#[derive(Deserialize, Tsify)]
-#[tsify(from_wasm_abi, large_number_types_as_bigints)]
-pub struct CustomDomainUpdateRequest {
-    /// Enable or disable catch-all generation; omission leaves it unchanged.
-    pub catch_all: Option<bool>,
-    /// Enable or disable random-prefix generation; omission leaves it unchanged.
-    pub random_prefix_generation: Option<bool>,
-    /// Set or clear the display name; omission leaves it unchanged.
-    pub name: Option<OptionalSensitiveStringUpdate>,
-    /// Replace all forwarding mailboxes; omission leaves them unchanged.
-    pub mailbox_ids: Option<Vec<MailboxId>>,
-}
+#[async_trait(?Send)]
+impl bitwarden_alias::AliasProviderAdapter for WasmAliasProviderAdapter {
+    fn descriptor(&self) -> bitwarden_alias::AliasAdapterDescriptor {
+        self.connection.adapter.clone()
+    }
 
-impl From<CustomDomainUpdateRequest> for bitwarden_alias::UpdateCustomDomainRequest {
-    fn from(value: CustomDomainUpdateRequest) -> Self {
-        Self {
-            catch_all: value.catch_all,
-            random_prefix_generation: value.random_prefix_generation,
-            name: value.name.map(OptionalSensitiveStringUpdate::into_core),
-            mailbox_ids: value.mailbox_ids,
-        }
+    fn connection_id(&self) -> &str {
+        &self.connection.connection_id
+    }
+
+    async fn create(&self, request: CreateAliasRequest) -> Result<Alias, AliasError> {
+        self.call("create", &[Self::argument(&request)?]).await
+    }
+
+    async fn list(&self, request: ListAliasesRequest) -> Result<AliasPage, AliasError> {
+        self.call("list", &[Self::argument(&request)?]).await
+    }
+
+    async fn get(&self, identity: AliasIdentity) -> Result<Alias, AliasError> {
+        self.call("get", &[Self::argument(&identity)?]).await
+    }
+
+    async fn set_enabled(
+        &self,
+        identity: AliasIdentity,
+        enabled: bool,
+    ) -> Result<Alias, AliasError> {
+        self.call(
+            "setEnabled",
+            &[Self::argument(&identity)?, JsValue::from_bool(enabled)],
+        )
+        .await
+    }
+
+    async fn delete(&self, identity: AliasIdentity) -> Result<DeleteAliasResult, AliasError> {
+        self.call("delete", &[Self::argument(&identity)?]).await
+    }
+
+    async fn create_send_reply_identity(
+        &self,
+        request: CreateSendReplyIdentityRequest,
+    ) -> Result<SendReplyIdentity, AliasError> {
+        self.call("createSendReplyIdentity", &[Self::argument(&request)?])
+            .await
+    }
+
+    async fn list_send_reply_identities(
+        &self,
+        alias: AliasIdentity,
+        page_token: Option<String>,
+    ) -> Result<SendReplyIdentityPage, AliasError> {
+        self.call(
+            "listSendReplyIdentities",
+            &[Self::argument(&alias)?, Self::argument(&page_token)?],
+        )
+        .await
+    }
+
+    async fn remove_send_reply_identity(
+        &self,
+        identity: SendReplyIdentity,
+    ) -> Result<(), AliasError> {
+        let _: Option<()> = self
+            .call("removeSendReplyIdentity", &[Self::argument(&identity)?])
+            .await?;
+        Ok(())
+    }
+
+    async fn set_send_reply_blocked(
+        &self,
+        identity: SendReplyIdentity,
+        blocked: bool,
+    ) -> Result<SendReplyIdentity, AliasError> {
+        self.call(
+            "setSendReplyBlocked",
+            &[Self::argument(&identity)?, JsValue::from_bool(blocked)],
+        )
+        .await
     }
 }
 
-/// Creates the canonical serialized current alias reference.
+/// Stateful provider-neutral lifecycle service around a host-injected adapter.
+#[wasm_bindgen]
+pub struct AliasClient {
+    inner: bitwarden_alias::AliasClient,
+    connection: AliasConnection,
+}
+
+#[wasm_bindgen]
+impl AliasClient {
+    /// Creates a lifecycle service from encrypted neutral connection metadata and a host adapter.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        connection: AliasConnection,
+        adapter: JsAliasProviderAdapter,
+    ) -> Result<Self, AliasError> {
+        let connection = connection.canonicalize()?;
+        let bridge = WasmAliasProviderAdapter {
+            inner: adapter.into(),
+            connection: connection.clone(),
+        };
+        let inner = bitwarden_alias::AliasClient::new(Arc::new(bridge))?;
+        Ok(Self { inner, connection })
+    }
+
+    /// Returns the canonical encrypted connection metadata supplied at construction.
+    pub fn connection(&self) -> AliasConnection {
+        self.connection.clone()
+    }
+
+    /// Creates an alias through the injected adapter.
+    pub async fn create(&self, request: CreateAliasRequest) -> Result<Alias, AliasError> {
+        self.inner.create(request).await
+    }
+
+    /// Lists a page of aliases through the injected adapter.
+    pub async fn list(&self, request: ListAliasesRequest) -> Result<AliasPage, AliasError> {
+        self.inner.list(request).await
+    }
+
+    /// Gets the current snapshot for a connection-scoped identity.
+    pub async fn get(&self, identity: AliasIdentity) -> Result<Alias, AliasError> {
+        self.inner.get(identity).await
+    }
+
+    /// Explicitly enables or disables an alias and validates the confirmed state.
+    pub async fn set_enabled(
+        &self,
+        identity: AliasIdentity,
+        enabled: bool,
+    ) -> Result<Alias, AliasError> {
+        self.inner.set_enabled(identity, enabled).await
+    }
+
+    /// Deletes an alias idempotently without modifying any bound login.
+    pub async fn delete(&self, identity: AliasIdentity) -> Result<DeleteAliasResult, AliasError> {
+        self.inner.delete(identity).await
+    }
+
+    /// Creates a recipient-scoped send/reply identity.
+    pub async fn create_send_reply_identity(
+        &self,
+        request: CreateSendReplyIdentityRequest,
+    ) -> Result<SendReplyIdentity, AliasError> {
+        self.inner.create_send_reply_identity(request).await
+    }
+
+    /// Lists recipient-scoped send/reply identities for one alias.
+    pub async fn list_send_reply_identities(
+        &self,
+        alias: AliasIdentity,
+        page_token: Option<String>,
+    ) -> Result<SendReplyIdentityPage, AliasError> {
+        self.inner
+            .list_send_reply_identities(alias, page_token)
+            .await
+    }
+
+    /// Removes a recipient-scoped send/reply identity.
+    pub async fn remove_send_reply_identity(
+        &self,
+        identity: SendReplyIdentity,
+    ) -> Result<(), AliasError> {
+        self.inner.remove_send_reply_identity(identity).await
+    }
+
+    /// Sets recipient blocking when the adapter negotiated `send-reply.block`.
+    pub async fn set_send_reply_blocked(
+        &self,
+        identity: SendReplyIdentity,
+        blocked: bool,
+    ) -> Result<SendReplyIdentity, AliasError> {
+        self.inner.set_send_reply_blocked(identity, blocked).await
+    }
+}
+
+/// Creates the canonical serialized v1 alias reference from neutral alias identity.
 #[wasm_bindgen]
 pub fn create_alias_reference(
-    identity: AliasProviderIdentity,
-    alias: Alias,
+    identity: bitwarden_alias::AliasIdentity,
 ) -> Result<SensitiveString, AliasReferenceError> {
-    core_create_alias_reference(&identity, &alias)
+    core_create_alias_reference(&identity)
 }
 
-/// Parses and validates a current alias reference without exposing its payload in errors.
+/// Parses and validates a canonical v1 alias reference without exposing its payload in errors.
 #[wasm_bindgen]
 pub fn parse_alias_reference(
     value: SensitiveString,
 ) -> Result<AliasReference, AliasReferenceError> {
-    // EXPOSE: Parsing requires the decrypted hidden-field payload. Errors never render it.
+    // EXPOSE: The caller already owns the decrypted login member. Errors never render its value.
     core_parse_alias_reference(value.expose())
 }
 
@@ -121,24 +349,32 @@ pub fn serialize_alias_reference(
     core_serialize_alias_reference(&reference)
 }
 
-/// Binds a canonical current reference to a decrypted login cipher.
+/// Binds a canonical reference to a decrypted login cipher after username integrity validation.
 #[wasm_bindgen]
 pub fn bind_alias_reference(
     value: SensitiveString,
     cipher: CipherView,
 ) -> Result<AliasCipherMutationResult, AliasReferenceError> {
-    // EXPOSE: Binding parses decrypted vault metadata and returns it only in the decrypted cipher.
+    // EXPOSE: Binding parses caller-owned decrypted vault metadata and never logs it.
     core_bind_alias_reference(value.expose(), cipher)
 }
 
-/// Computes a deterministic non-mutating reconciliation plan.
+/// Clears a binding before save when the login username no longer matches its bound address.
+#[wasm_bindgen]
+pub fn clear_alias_reference_if_username_changed(
+    cipher: CipherView,
+) -> Result<AliasCipherMutationResult, AliasReferenceError> {
+    core_clear_alias_reference_if_username_changed(cipher)
+}
+
+/// Computes a deterministic, read-only reconciliation plan for one stable connection.
 #[wasm_bindgen]
 pub fn plan_alias_reconciliation(
-    provider: AliasProviderIdentity,
+    connection_id: String,
     aliases: Vec<Alias>,
     ciphers: Vec<CipherView>,
 ) -> Result<AliasReconciliationPlan, AliasReconciliationError> {
-    core_plan_alias_reconciliation(&provider, &aliases, &ciphers)
+    core_plan_alias_reconciliation(&connection_id, &aliases, &ciphers)
 }
 
 /// Atomically validates and applies a reconciliation plan to owned decrypted ciphers.
@@ -151,199 +387,23 @@ pub fn apply_alias_reconciliation(
     core_apply_alias_reconciliation(&plan, &aliases, ciphers)
 }
 
-/// Complete SimpleLogin alias lifecycle operations for WebAssembly consumers.
+/// Validates and deterministically orders an encrypted provider-neutral journal.
 #[wasm_bindgen]
-pub struct AliasClient(bitwarden_alias::AliasClient);
-
-impl From<bitwarden_alias::AliasClient> for AliasClient {
-    fn from(value: bitwarden_alias::AliasClient) -> Self {
-        Self(value)
-    }
+pub fn canonicalize_alias_journal(journal: AliasJournal) -> Result<AliasJournal, AliasError> {
+    journal.canonicalize()
 }
 
+/// Pure set-union merge for two journals belonging to the same stable connection.
 #[wasm_bindgen]
-impl AliasClient {
-    /// Creates a standalone alias lifecycle client.
-    #[wasm_bindgen(constructor)]
-    pub fn new(settings: AliasClientSettings) -> Result<Self, AliasError> {
-        bitwarden_alias::AliasClient::new(settings).map(Self)
-    }
+pub fn merge_alias_journals(
+    left: AliasJournal,
+    right: AliasJournal,
+) -> Result<AliasJournal, AliasError> {
+    left.merge(&right)
+}
 
-    /// Returns the stable non-secret identity that selects this provider connection.
-    pub fn provider_identity(&self) -> Result<AliasProviderIdentity, AliasReferenceError> {
-        self.0.provider_identity()
-    }
-
-    /// Creates the canonical serialized reference for alias data returned by this client.
-    pub fn create_alias_reference(
-        &self,
-        alias: Alias,
-    ) -> Result<SensitiveString, AliasReferenceError> {
-        self.0.alias_reference(&alias)?.encode()
-    }
-
-    /// Creates a random alias.
-    pub async fn create_random_alias(
-        &self,
-        request: CreateRandomAliasRequest,
-    ) -> Result<Alias, AliasError> {
-        self.0.create_random_alias(request).await
-    }
-
-    /// Creates a custom alias using a signed suffix from [`Self::get_alias_options`].
-    pub async fn create_custom_alias(
-        &self,
-        request: CreateCustomAliasRequest,
-    ) -> Result<Alias, AliasError> {
-        self.0.create_custom_alias(request).await
-    }
-
-    /// Gets alias creation options and any hostname recommendation.
-    pub async fn get_alias_options(
-        &self,
-        hostname: Option<SensitiveString>,
-    ) -> Result<AliasCreationOptions, AliasError> {
-        self.0.get_alias_options(hostname.as_ref()).await
-    }
-
-    /// Gets the most recently associated alias for a hostname.
-    pub async fn get_alias_recommendation(
-        &self,
-        hostname: SensitiveString,
-    ) -> Result<Option<AliasRecommendation>, AliasError> {
-        self.0.get_alias_recommendation(&hostname).await
-    }
-
-    /// Lists a page of aliases.
-    pub async fn list_aliases(
-        &self,
-        page: u32,
-        filter: Option<AliasFilter>,
-    ) -> Result<AliasPage, AliasError> {
-        self.0
-            .list_aliases(ListAliasesRequest { page, filter })
-            .await
-    }
-
-    /// Searches aliases by address, note, and name.
-    pub async fn search_aliases(
-        &self,
-        request: SearchAliasesRequest,
-    ) -> Result<AliasPage, AliasError> {
-        self.0.search_aliases(request).await
-    }
-
-    /// Gets full lifecycle data for a stable alias identifier.
-    pub async fn get_alias(&self, alias_id: AliasId) -> Result<Alias, AliasError> {
-        self.0.get_alias(alias_id).await
-    }
-
-    /// Updates mutable alias fields.
-    pub async fn update_alias(
-        &self,
-        alias_id: AliasId,
-        request: AliasUpdateRequest,
-    ) -> Result<Alias, AliasError> {
-        self.0.update_alias(alias_id, request.into()).await
-    }
-
-    /// Explicitly sets alias forwarding state.
-    pub async fn set_alias_enabled(
-        &self,
-        alias_id: AliasId,
-        enabled: bool,
-    ) -> Result<AliasState, AliasError> {
-        self.0.set_alias_enabled(alias_id, enabled).await
-    }
-
-    /// Enables an alias.
-    pub async fn enable_alias(&self, alias_id: AliasId) -> Result<AliasState, AliasError> {
-        self.0.enable_alias(alias_id).await
-    }
-
-    /// Disables an alias.
-    pub async fn disable_alias(&self, alias_id: AliasId) -> Result<AliasState, AliasError> {
-        self.0.disable_alias(alias_id).await
-    }
-
-    /// Deletes an alias.
-    pub async fn delete_alias(&self, alias_id: AliasId) -> Result<DeleteAliasResult, AliasError> {
-        self.0.delete_alias(alias_id).await
-    }
-
-    /// Lists domains available for random alias creation.
-    pub async fn list_domains(&self) -> Result<Vec<AliasDomain>, AliasError> {
-        self.0.list_domains().await
-    }
-
-    /// Lists account custom domains.
-    pub async fn list_custom_domains(&self) -> Result<Vec<CustomDomain>, AliasError> {
-        self.0.list_custom_domains().await
-    }
-
-    /// Updates mutable custom-domain settings.
-    pub async fn update_custom_domain(
-        &self,
-        domain_id: CustomDomainId,
-        request: CustomDomainUpdateRequest,
-    ) -> Result<CustomDomain, AliasError> {
-        self.0.update_custom_domain(domain_id, request.into()).await
-    }
-
-    /// Lists account forwarding mailboxes.
-    pub async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, AliasError> {
-        self.0.list_mailboxes().await
-    }
-
-    /// Lists contacts and their reverse aliases.
-    pub async fn list_reverse_aliases(
-        &self,
-        alias_id: AliasId,
-        page: u32,
-    ) -> Result<ReverseAliasPage, AliasError> {
-        self.0.list_reverse_aliases(alias_id, page).await
-    }
-
-    /// Lists contacts for an alias.
-    pub async fn list_contacts(
-        &self,
-        alias_id: AliasId,
-        page: u32,
-    ) -> Result<ReverseAliasPage, AliasError> {
-        self.0.list_contacts(alias_id, page).await
-    }
-
-    /// Creates or retrieves a reverse alias for a contact.
-    pub async fn create_reverse_alias(
-        &self,
-        alias_id: AliasId,
-        contact: SensitiveString,
-    ) -> Result<ReverseAlias, AliasError> {
-        self.0.create_reverse_alias(alias_id, contact).await
-    }
-
-    /// Creates a contact and returns its reverse alias.
-    pub async fn create_contact(
-        &self,
-        alias_id: AliasId,
-        contact: SensitiveString,
-    ) -> Result<ReverseAlias, AliasError> {
-        self.0.create_contact(alias_id, contact).await
-    }
-
-    /// Toggles whether a contact is blocked.
-    pub async fn toggle_contact_blocked(
-        &self,
-        contact_id: ContactId,
-    ) -> Result<ContactState, AliasError> {
-        self.0.toggle_contact_blocked(contact_id).await
-    }
-
-    /// Deletes a contact and its reverse alias.
-    pub async fn delete_contact(
-        &self,
-        contact_id: ContactId,
-    ) -> Result<DeleteContactResult, AliasError> {
-        self.0.delete_contact(contact_id).await
-    }
+/// Pure deterministic reduction of canonical journal facts into operation and resource state.
+#[wasm_bindgen]
+pub fn reduce_alias_journal(journal: AliasJournal) -> Result<AliasJournalState, AliasError> {
+    journal.reduce()
 }

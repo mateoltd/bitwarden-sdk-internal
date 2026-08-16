@@ -484,6 +484,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 name = "bitwarden-alias"
 version = "3.0.0"
 dependencies = [
+ "async-trait",
  "bitwarden-api-base",
  "bitwarden-core",
  "bitwarden-sensitive-value",
@@ -913,17 +914,13 @@ dependencies = [
 name = "bitwarden-generators"
 version = "3.0.0"
 dependencies = [
- "bitwarden-alias",
- "bitwarden-api-base",
  "bitwarden-core",
  "bitwarden-crypto",
  "bitwarden-error",
  "bitwarden-random",
- "bitwarden-sensitive-value",
  "password-rules-parser",
  "rand 0.10.2",
  "rand_chacha 0.10.0",
- "reqwest",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -932,7 +929,6 @@ dependencies = [
  "tsify",
  "uniffi",
  "wasm-bindgen",
- "wiremock",
 ]
 
 [[package]]
@@ -1570,6 +1566,7 @@ dependencies = [
  "bitwarden-user-crypto-management",
  "bitwarden-vault",
  "console_error_panic_hook",
+ "js-sys",
  "rand 0.10.2",
  "rsa",
  "serde",
