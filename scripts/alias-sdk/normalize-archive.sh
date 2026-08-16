@@ -44,7 +44,10 @@ case "$archive_format" in
         fi
         (
             cd "$source_directory"
-            find . -print0 \
+            find . -mindepth 1 -print0 \
+                | while IFS= read -r -d '' entry; do
+                    printf '%s\0' "${entry#./}"
+                done \
                 | LC_ALL=C sort -z \
                 | COPYFILE_DISABLE=1 tar \
                     --null \
@@ -55,6 +58,10 @@ case "$archive_format" in
                     -cf - \
                 | gzip -n -9 >"$temporary_directory/archive.tar.gz"
         )
+        if tar -tzf "$temporary_directory/archive.tar.gz" | grep -Eq '^(\./|/)'; then
+            echo "Archive normalization failed: archive contains a non-canonical path" >&2
+            exit 1
+        fi
         mv "$temporary_directory/archive.tar.gz" "$archive_path"
         ;;
     zip)
