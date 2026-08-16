@@ -1,30 +1,20 @@
-//! Executable refinement checks for the machine-checked alias security model.
+//! Executable refinement checks for the machine-checked provider-neutral alias model.
 
-use std::{
-    io::Read,
-    net::TcpListener,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    thread,
-    time::{Duration, Instant},
-};
+use std::{fs, path::Path};
 
 use bitwarden_alias::{
-    ALIAS_REFERENCE_FIELD_NAME, ALIAS_REFERENCE_VERSION, Alias, AliasClient, AliasClientSettings,
-    AliasError, AliasId, AliasProviderIdentity, AliasReferenceError, MailboxId, MailboxRef,
-    apply_alias_reconciliation, create_alias_reference, parse_alias_reference,
-    plan_alias_reconciliation,
+    Alias, AliasAdapterDescriptor, AliasConsistency, AliasError, AliasFreshness, AliasIdentity,
+    AliasJournal, AliasLifecycleState, AliasProviderCapabilities, AliasReconciliationError,
+    AliasReferenceError, AliasTelemetryEvent, apply_alias_reconciliation, create_alias_reference,
+    parse_alias_reference, plan_alias_reconciliation,
 };
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_vault::{
-    CipherRepromptType, CipherType, CipherView, FieldType, FieldView, LoginView,
+    CipherId, CipherRepromptType, CipherType, CipherView, FieldType, FieldView, LoginView,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
 const VECTORS: &str = include_str!("../../../formal/alias-security/conformance-vectors.json");
 
@@ -39,8 +29,11 @@ struct Vectors {
     identities: Identities,
     reference_vectors: Vec<ReferenceVector>,
     rejected_reference_vectors: Vec<RejectedReferenceVector>,
+    adapter_vectors: AdapterVectors,
+    capability_vectors: CapabilityVectors,
+    journal_schema: JournalSchema,
+    journal_merge_vectors: Vec<JournalMergeVector>,
     reconciliation_vectors: Vec<ReconciliationVector>,
-    lifecycle_traces: Vec<LifecycleTrace>,
     operation_semantics: OperationSemantics,
 }
 
@@ -48,7 +41,9 @@ struct Vectors {
 #[serde(rename_all = "camelCase")]
 struct ReferenceSchema {
     version: u32,
-    vault_field_name: String,
+    login_member_name: String,
+    max_encoded_bytes: usize,
+    max_alias_id_bytes: usize,
     ordered_fields: Vec<String>,
     forbidden_fields: Vec<String>,
     credential_sentinel: String,
@@ -57,24 +52,21 @@ struct ReferenceSchema {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Identities {
-    primary: Identity,
-    same_origin_second_account: Identity,
+    primary: Connection,
+    second_connection: Connection,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Identity {
-    provider: String,
-    instance: String,
+struct Connection {
     connection_id: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReferenceVector {
-    name: String,
     identity: String,
-    alias_id: u64,
+    alias_id: String,
     address: String,
     expected_canonical: String,
 }
@@ -82,25 +74,69 @@ struct ReferenceVector {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RejectedReferenceVector {
-    name: String,
     classification: String,
     encoded: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReconciliationVector {
+struct AdapterVectors {
+    accepted_ids: Vec<String>,
+    rejected_ids: Vec<String>,
+    common_contract_must_not_contain: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityVectors {
+    first_class: AliasProviderCapabilities,
+    with_extension: CapabilityExtensions,
+    rejected_extensions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CapabilityExtensions {
+    extensions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JournalSchema {
+    version: u32,
+    max_events: usize,
+    max_causal_entries: usize,
+    ordered_journal_fields: Vec<String>,
+    ordered_event_fields: Vec<String>,
+    forbidden_fields: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JournalMergeVector {
     name: String,
-    identity: String,
+    connection_id: String,
+    left_events: Vec<Value>,
+    right_events: Vec<Value>,
+    expected: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReconciliationVector {
+    connection_id: String,
     aliases: Vec<AliasFixture>,
     ciphers: Vec<CipherFixture>,
     expected: ReconciliationExpected,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AliasFixture {
-    id: u64,
+    alias_id: String,
     address: String,
+    lifecycle: AliasLifecycleState,
+    freshness: AliasFreshness,
+    consistency: AliasConsistency,
 }
 
 #[derive(Deserialize)]
@@ -124,124 +160,379 @@ struct ReconciliationExpected {
     actions_after_replan: usize,
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LifecycleTrace {
-    name: String,
-    alias_id: u64,
-    desired_enabled: bool,
-    initial_enabled: bool,
-    steps: Vec<LifecycleStep>,
-    expected_enabled: Option<bool>,
-    expected_error: Option<String>,
-    expected_toggle_count: usize,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LifecycleStep {
-    kind: String,
-    provider_enabled_after: bool,
-    response_enabled: Option<bool>,
-}
-
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct OperationSemantics {
-    disable: DisableSemantics,
-    delete: DeleteSemantics,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DisableSemantics {
-    provider_resource: String,
-    vault_cipher: String,
-    success_evidence: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteSemantics {
-    confirmed_alias_id: u64,
-    unknown_alias_id: u64,
-    provider_resource: String,
-    vault_cipher: String,
-    transport_failure: String,
+    telemetry_allowlist: Vec<String>,
 }
 
 fn vectors() -> Vectors {
-    serde_json::from_str(VECTORS).expect("formal conformance vectors must be valid")
+    serde_json::from_str(VECTORS).expect("canonical vectors must deserialize")
 }
 
-fn identity(fixture: &Identity) -> AliasProviderIdentity {
-    assert_eq!(fixture.provider, "simplelogin");
-    AliasProviderIdentity::simplelogin(&fixture.instance, &fixture.connection_id)
-        .expect("formal identity must be valid")
+#[test]
+fn formal_model_digest_and_schema_constants_match() {
+    let vectors = vectors();
+    assert_eq!(vectors.contract_version, 1);
+    assert_eq!(vectors.model_revision, "alias-security-v1-provider-neutral");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut digest = Sha256::new();
+    for file in &vectors.model_files {
+        digest.update(
+            fs::read(root.join("formal/alias-security").join(file))
+                .expect("declared model file must exist"),
+        );
+    }
+    let actual = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(actual, vectors.model_sha256);
+    assert_eq!(vectors.reference_schema.version, 1);
+    assert_eq!(vectors.reference_schema.login_member_name, "aliasReference");
+    assert_eq!(vectors.reference_schema.max_encoded_bytes, 4096);
+    assert_eq!(vectors.reference_schema.max_alias_id_bytes, 512);
+    assert_eq!(
+        vectors.reference_schema.ordered_fields,
+        ["version", "connectionId", "aliasId", "address"]
+    );
+    assert_eq!(vectors.journal_schema.version, 1);
+    assert_eq!(vectors.journal_schema.max_events, 10_000);
+    assert_eq!(vectors.journal_schema.max_causal_entries, 128);
+    assert_eq!(
+        vectors.journal_schema.ordered_journal_fields,
+        ["version", "connectionId", "events"]
+    );
+    assert_eq!(vectors.journal_schema.ordered_event_fields.len(), 11);
 }
 
-fn select_identity<'a>(vectors: &'a Vectors, name: &str) -> &'a Identity {
-    match name {
-        "primary" => &vectors.identities.primary,
-        "sameOriginSecondAccount" => &vectors.identities.same_origin_second_account,
-        _ => panic!("unknown formal identity {name}"),
+#[test]
+fn reference_vectors_are_exact_connection_scoped_and_opaque() {
+    let vectors = vectors();
+    for vector in vectors.reference_vectors {
+        let connection_id = match vector.identity.as_str() {
+            "primary" => &vectors.identities.primary.connection_id,
+            "secondConnection" => &vectors.identities.second_connection.connection_id,
+            other => panic!("unknown identity fixture {other}"),
+        };
+        let identity = AliasIdentity::new(
+            connection_id.clone(),
+            vector.alias_id.clone(),
+            SensitiveString::from(vector.address),
+        )
+        .expect("accepted identity should validate");
+        let encoded = create_alias_reference(&identity).expect("reference should encode");
+        assert_eq!(encoded.expose(), &vector.expected_canonical);
+        let parsed = parse_alias_reference(encoded.expose()).expect("reference should parse");
+        assert_eq!(parsed.alias_id, vector.alias_id);
+        assert_eq!(parsed.connection_id, *connection_id);
     }
 }
 
-fn alias(id: u64, address: &str) -> Alias {
-    let mailbox = MailboxRef {
-        id: MailboxId(1),
-        email: SensitiveString::from("owner@example.test"),
+#[test]
+fn alias_addresses_reject_internal_whitespace() {
+    assert!(
+        AliasIdentity::new(
+            vectors().identities.primary.connection_id,
+            "opaque/id:%2F7".to_owned(),
+            SensitiveString::from("first user@example.test"),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn old_or_malformed_reference_shapes_fail_closed() {
+    for vector in vectors().rejected_reference_vectors {
+        let error = parse_alias_reference(&vector.encoded).expect_err("vector must be rejected");
+        match vector.classification.as_str() {
+            "malformed" => assert!(matches!(error, AliasReferenceError::Malformed)),
+            "unsupportedVersion" => {
+                assert!(matches!(error, AliasReferenceError::UnsupportedVersion))
+            }
+            "invalidValue" => assert!(matches!(error, AliasReferenceError::InvalidValue)),
+            other => panic!("unknown rejection class {other}"),
+        }
+    }
+}
+
+#[test]
+fn adapter_and_capability_identifiers_are_extensible_not_enums() {
+    let vectors = vectors();
+    for adapter_id in vectors.adapter_vectors.accepted_ids {
+        AliasAdapterDescriptor {
+            adapter_id,
+            capabilities: vectors.capability_vectors.first_class.clone(),
+        }
+        .canonicalize()
+        .expect("accepted adapter ID should validate");
+    }
+    for adapter_id in vectors.adapter_vectors.rejected_ids {
+        assert!(matches!(
+            AliasAdapterDescriptor {
+                adapter_id,
+                capabilities: vectors.capability_vectors.first_class.clone(),
+            }
+            .canonicalize(),
+            Err(AliasError::InvalidInput)
+        ));
+    }
+    let mut extended = vectors.capability_vectors.first_class.clone();
+    extended.extensions = vectors.capability_vectors.with_extension.extensions;
+    AliasAdapterDescriptor {
+        adapter_id: "example.alias-v2".to_owned(),
+        capabilities: extended,
+    }
+    .canonicalize()
+    .expect("validated extensions remain open-ended");
+    for extension in vectors.capability_vectors.rejected_extensions {
+        let mut capabilities = vectors.capability_vectors.first_class.clone();
+        capabilities.extensions = vec![extension];
+        assert!(
+            AliasAdapterDescriptor {
+                adapter_id: "example".to_owned(),
+                capabilities,
+            }
+            .canonicalize()
+            .is_err()
+        );
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let common = ["models.rs", "journal.rs", "reconciliation.rs", "error.rs"]
+        .into_iter()
+        .map(|file| fs::read_to_string(root.join(file)).unwrap())
+        .collect::<String>();
+    for named_provider in vectors.adapter_vectors.common_contract_must_not_contain {
+        assert!(!common.contains(&named_provider));
+    }
+}
+
+#[test]
+fn journal_vectors_refine_unknown_tombstone_and_conflict_semantics() {
+    for vector in vectors().journal_merge_vectors {
+        let journal = |events: Vec<Value>| {
+            serde_json::from_value::<AliasJournal>(serde_json::json!({
+                "version": 1,
+                "connectionId": vector.connection_id,
+                "events": events,
+            }))
+            .expect("journal vector should deserialize")
+        };
+        let left = journal(vector.left_events);
+        let right = journal(vector.right_events);
+        let merged = left.merge(&right).expect("journal merge should succeed");
+        assert_eq!(merged, right.merge(&left).unwrap(), "merge is commutative");
+        assert_eq!(
+            merged,
+            merged.merge(&merged).unwrap(),
+            "merge is idempotent"
+        );
+        let empty = AliasJournal::empty(vector.connection_id.clone()).unwrap();
+        assert_eq!(
+            left.merge(&right).unwrap().merge(&empty).unwrap(),
+            left.merge(&right.merge(&empty).unwrap()).unwrap(),
+            "merge is associative"
+        );
+        let reduced = merged.reduce().expect("merged journal should reduce");
+        match vector.name.as_str() {
+            "dispatched-delete-with-lost-response-remains-unknown" => {
+                assert_eq!(
+                    merged.events.len() as u64,
+                    vector.expected["mergedEventCount"].as_u64().unwrap()
+                );
+                assert_eq!(
+                    serde_json::to_value(reduced.operations[0].phase).unwrap(),
+                    vector.expected["phase"]
+                );
+            }
+            "delete-tombstone-dominates-stale-enabled-observation" => {
+                assert_eq!(reduced.resources[0].lifecycle, AliasLifecycleState::Deleted);
+                assert!(reduced.resources[0].tombstoned);
+            }
+            "concurrent-incompatible-lifecycle-observations-conflict" => {
+                assert!(!reduced.conflicts.is_empty());
+            }
+            other => panic!("unknown journal vector {other}"),
+        }
+        assert_eq!(format!("{merged:?}"), "AliasJournal([REDACTED])");
+    }
+}
+
+#[test]
+fn reconciliation_is_atomic_idempotent_and_frame_preserving() {
+    for vector in vectors().reconciliation_vectors {
+        let capabilities = AliasProviderCapabilities::first_class();
+        let aliases = vector
+            .aliases
+            .into_iter()
+            .map(|alias| Alias {
+                identity: AliasIdentity::new(
+                    vector.connection_id.clone(),
+                    alias.alias_id,
+                    SensitiveString::from(alias.address),
+                )
+                .unwrap(),
+                lifecycle: alias.lifecycle,
+                freshness: alias.freshness,
+                consistency: alias.consistency,
+                label: None,
+                capabilities: capabilities.clone(),
+            })
+            .collect::<Vec<_>>();
+        let mut ciphers = vector
+            .ciphers
+            .into_iter()
+            .map(cipher_from_fixture)
+            .collect::<Vec<_>>();
+        let unrelated_before = serde_json::to_value(&ciphers[1]).unwrap();
+        let target_fields_before = serde_json::to_value(&ciphers[0].fields).unwrap();
+        let target_password_before = ciphers[0].login.as_ref().unwrap().password.clone();
+
+        let plan = plan_alias_reconciliation(&vector.connection_id, &aliases, &ciphers).unwrap();
+        assert_eq!(
+            plan.summary.proposed_repairs,
+            vector.expected.proposed_repairs
+        );
+        let first = apply_alias_reconciliation(&plan, &aliases, &mut ciphers).unwrap();
+        assert_eq!(
+            first
+                .changed_cipher_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vector.expected.changed_cipher_ids
+        );
+        assert_eq!(serde_json::to_value(&ciphers[1]).unwrap(), unrelated_before);
+        assert_eq!(
+            serde_json::to_value(&ciphers[0].fields).unwrap(),
+            target_fields_before
+        );
+        assert_eq!(
+            ciphers[0].login.as_ref().unwrap().password,
+            target_password_before
+        );
+        let replay = apply_alias_reconciliation(&plan, &aliases, &mut ciphers).unwrap();
+        assert_eq!(
+            replay.unchanged_actions,
+            vector.expected.unchanged_actions_on_replay
+        );
+        let replanned =
+            plan_alias_reconciliation(&vector.connection_id, &aliases, &ciphers).unwrap();
+        assert_eq!(
+            replanned.actions.len(),
+            vector.expected.actions_after_replan
+        );
+    }
+}
+
+#[test]
+fn reconciliation_never_repairs_from_stale_or_conflicted_provider_state() {
+    let identity = AliasIdentity::new(
+        "11111111-1111-4111-8111-111111111111".to_owned(),
+        "opaque/id:%2F7".to_owned(),
+        SensitiveString::from("first@example.test"),
+    )
+    .unwrap();
+    for (freshness, consistency) in [
+        (AliasFreshness::Stale, AliasConsistency::Clean),
+        (AliasFreshness::Current, AliasConsistency::Conflicted),
+    ] {
+        let alias = Alias {
+            identity: identity.clone(),
+            lifecycle: AliasLifecycleState::Enabled,
+            freshness,
+            consistency,
+            label: None,
+            capabilities: AliasProviderCapabilities::first_class(),
+        };
+        assert!(matches!(
+            plan_alias_reconciliation(&identity.connection_id, &[alias], &[]),
+            Err(AliasReconciliationError::InvalidInput)
+        ));
+    }
+}
+
+#[test]
+fn closed_schemas_and_telemetry_exclude_sensitive_fields() {
+    let vectors = vectors();
+    for forbidden in vectors
+        .reference_schema
+        .forbidden_fields
+        .iter()
+        .chain(&vectors.journal_schema.forbidden_fields)
+    {
+        assert!(!vectors.reference_schema.ordered_fields.contains(forbidden));
+        assert!(
+            !vectors
+                .journal_schema
+                .ordered_event_fields
+                .contains(forbidden)
+        );
+    }
+    assert!(!VECTORS.contains(&format!(
+        "\"{}\":",
+        vectors.reference_schema.credential_sentinel
+    )));
+    let telemetry = AliasTelemetryEvent {
+        operation: bitwarden_alias::AliasOperationKind::Reconcile,
+        platform: bitwarden_alias::AliasPlatform::Other,
+        error_code: None,
+        success: true,
     };
-    Alias {
-        id: AliasId(id),
-        email: SensitiveString::from(address),
-        creation_date: "2026-08-12T00:00:00Z".to_owned(),
-        creation_timestamp: 1,
-        enabled: true,
-        note: None,
-        name: None,
-        nb_forward: 0,
-        nb_block: 0,
-        nb_reply: 0,
-        mailbox,
-        mailboxes: Vec::new(),
-        support_pgp: false,
-        disable_pgp: false,
-        latest_activity: None,
-        pinned: false,
-    }
+    let mut fields = serde_json::to_value(telemetry)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut expected = vectors.operation_semantics.telemetry_allowlist;
+    fields.sort();
+    expected.sort();
+    assert_eq!(fields, expected);
+
+    assert!(
+        serde_json::from_value::<bitwarden_alias::AliasReconciliationOutcome>(serde_json::json!({
+            "status": "unboundAlias",
+            "aliasId": "remote/object:7",
+            "providerBody": "forbidden"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<bitwarden_alias::AliasReconciliationAction>(serde_json::json!({
+            "action": "refresh",
+            "aliasId": "remote/object:7",
+            "cipherId": "00000000-0000-4000-8000-000000000001",
+            "referenceAddressStale": true,
+            "usernameStale": true,
+            "credential": "forbidden"
+        }))
+        .is_err()
+    );
 }
 
-fn cipher(fixture: &CipherFixture) -> CipherView {
-    let timestamp = "2026-08-12T00:00:00Z"
+fn cipher_from_fixture(fixture: CipherFixture) -> CipherView {
+    let timestamp = "2026-08-10T10:00:00Z"
         .parse()
-        .expect("fixture timestamp must parse");
-    let mut fields = vec![FieldView {
-        name: Some(fixture.custom_field_name.clone()),
-        value: Some(fixture.custom_field_value.clone()),
-        r#type: FieldType::Text,
-        linked_id: None,
-    }];
-    if let Some(reference) = &fixture.alias_reference {
-        fields.push(FieldView {
-            name: Some(ALIAS_REFERENCE_FIELD_NAME.to_owned()),
-            value: Some(reference.clone()),
-            r#type: FieldType::Hidden,
-            linked_id: None,
-        });
-    }
+        .expect("the fixed fixture timestamp must be valid RFC 3339");
+    let id: CipherId = serde_json::from_str(&format!("\"{}\"", fixture.id))
+        .expect("the conformance fixture cipher ID must be a valid UUID");
     CipherView {
-        id: Some(fixture.id.parse().expect("fixture cipher ID must parse")),
+        id: Some(id),
         organization_id: None,
         folder_id: None,
         collection_ids: Vec::new(),
         key: None,
-        name: fixture.name.clone(),
-        notes: Some(fixture.notes.clone()),
+        name: fixture.name,
+        notes: Some(fixture.notes),
         r#type: CipherType::Login,
         login: Some(LoginView {
-            username: Some(fixture.username.clone()),
-            password: Some("unrelated-password".to_owned()),
+            username: Some(fixture.username),
+            password: Some("frame-preserved-password".to_owned()),
+            alias_reference: fixture.alias_reference,
             password_revision_date: None,
             uris: None,
             totp: None,
@@ -255,7 +546,7 @@ fn cipher(fixture: &CipherFixture) -> CipherView {
         bank_account: None,
         drivers_license: None,
         passport: None,
-        favorite: true,
+        favorite: false,
         reprompt: CipherRepromptType::None,
         organization_use_totp: false,
         edit: true,
@@ -264,404 +555,16 @@ fn cipher(fixture: &CipherFixture) -> CipherView {
         local_data: None,
         attachments: None,
         attachment_decryption_failures: None,
-        fields: Some(fields),
+        fields: Some(vec![FieldView {
+            name: Some(fixture.custom_field_name),
+            value: Some(fixture.custom_field_value),
+            r#type: FieldType::Text,
+            linked_id: None,
+        }]),
         password_history: None,
         creation_date: timestamp,
         deleted_date: None,
         revision_date: timestamp,
         archived_date: None,
     }
-}
-
-fn unrelated_projection(cipher: &CipherView) -> Value {
-    let mut value = serde_json::to_value(cipher).expect("cipher projection must serialize");
-    if let Some(login) = value.get_mut("login").and_then(Value::as_object_mut) {
-        login.insert("username".to_owned(), Value::Null);
-    }
-    if let Some(fields) = value.get_mut("fields").and_then(Value::as_array_mut) {
-        fields.retain(|field| {
-            field.get("name").and_then(Value::as_str) != Some(ALIAS_REFERENCE_FIELD_NAME)
-        });
-    }
-    value
-}
-
-fn alias_json(id: u64, enabled: bool) -> Value {
-    json!({
-        "id": id,
-        "email": format!("alias-{id}@sl.test"),
-        "creation_date": "2026-08-12T00:00:00Z",
-        "creation_timestamp": 1,
-        "enabled": enabled,
-        "note": null,
-        "name": null,
-        "nb_forward": 0,
-        "nb_block": 0,
-        "nb_reply": 0,
-        "mailbox": {"id": 1, "email": "owner@example.test"},
-        "mailboxes": [{"id": 1, "email": "owner@example.test"}],
-        "support_pgp": false,
-        "disable_pgp": false,
-        "latest_activity": null,
-        "pinned": false
-    })
-}
-
-#[test]
-fn production_reference_schema_refines_the_formal_contract() {
-    let vectors = vectors();
-    assert_eq!(vectors.contract_version, 1);
-    assert_eq!(vectors.model_revision, "alias-security-v1-current-only");
-    assert_eq!(
-        vectors.model_files,
-        [
-            "AliasVault.tla",
-            "AliasVault.cfg",
-            "AliasLifecycle.tla",
-            "AliasLifecycle.cfg",
-            "AliasLifecycleQuiescent.cfg",
-        ]
-    );
-    let mut model = Sha256::new();
-    model.update(include_bytes!(
-        "../../../formal/alias-security/AliasVault.tla"
-    ));
-    model.update(include_bytes!(
-        "../../../formal/alias-security/AliasVault.cfg"
-    ));
-    model.update(include_bytes!(
-        "../../../formal/alias-security/AliasLifecycle.tla"
-    ));
-    model.update(include_bytes!(
-        "../../../formal/alias-security/AliasLifecycle.cfg"
-    ));
-    model.update(include_bytes!(
-        "../../../formal/alias-security/AliasLifecycleQuiescent.cfg"
-    ));
-    let model_sha256 = model
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    assert_eq!(model_sha256, vectors.model_sha256);
-    assert_eq!(vectors.reference_schema.version, ALIAS_REFERENCE_VERSION);
-    assert_eq!(
-        vectors.reference_schema.vault_field_name,
-        ALIAS_REFERENCE_FIELD_NAME
-    );
-
-    for vector in &vectors.reference_vectors {
-        let provider = identity(select_identity(&vectors, &vector.identity));
-        let encoded = create_alias_reference(&provider, &alias(vector.alias_id, &vector.address))
-            .expect("proved reference vector must encode");
-        assert_eq!(
-            encoded.expose().as_str(),
-            vector.expected_canonical,
-            "{}",
-            vector.name
-        );
-        let parsed =
-            parse_alias_reference(encoded.expose()).expect("proved reference vector must parse");
-        assert_eq!(parsed.provider_identity(), provider, "{}", vector.name);
-        assert_eq!(parsed.alias_id, AliasId(vector.alias_id), "{}", vector.name);
-        assert_eq!(parsed.encode().expect("reference must re-encode"), encoded);
-
-        let value: Value = serde_json::from_str(encoded.expose()).expect("canonical JSON");
-        let mut keys: Vec<_> = value
-            .as_object()
-            .expect("reference must be an object")
-            .keys()
-            .cloned()
-            .collect();
-        keys.sort();
-        let mut expected_keys = vectors.reference_schema.ordered_fields.clone();
-        expected_keys.sort();
-        assert_eq!(keys, expected_keys, "{}", vector.name);
-        for forbidden in &vectors.reference_schema.forbidden_fields {
-            assert!(!value.as_object().expect("object").contains_key(forbidden));
-        }
-        assert!(
-            !encoded
-                .expose()
-                .contains(&vectors.reference_schema.credential_sentinel)
-        );
-    }
-
-    let vector = &vectors.reference_vectors[0];
-    let mut hostile: Value =
-        serde_json::from_str(&vector.expected_canonical).expect("canonical JSON");
-    hostile["apiToken"] = Value::String(vectors.reference_schema.credential_sentinel.clone());
-    let hostile = hostile.to_string();
-    let error = parse_alias_reference(&hostile).expect_err("credential field must be rejected");
-    let rendered = format!("{error:?} {error}");
-    assert!(!rendered.contains(&vectors.reference_schema.credential_sentinel));
-
-    for rejected in &vectors.rejected_reference_vectors {
-        let error = parse_alias_reference(&rejected.encoded)
-            .expect_err("non-v1 conformance vector must fail closed");
-        match rejected.classification.as_str() {
-            "malformed" => assert!(
-                matches!(&error, AliasReferenceError::Malformed),
-                "{}",
-                rejected.name
-            ),
-            "unsupportedVersion" => assert!(
-                matches!(&error, AliasReferenceError::UnsupportedVersion { .. }),
-                "{}",
-                rejected.name
-            ),
-            classification => panic!(
-                "unknown rejected reference classification {classification} for {}",
-                rejected.name
-            ),
-        }
-        let rendered = format!("{error:?} {error}");
-        assert!(!rendered.contains(&rejected.encoded), "{}", rejected.name);
-    }
-}
-
-#[test]
-fn production_reconciliation_refines_atomic_idempotent_preservation_rules() {
-    let vectors = vectors();
-    for vector in &vectors.reconciliation_vectors {
-        let provider = identity(select_identity(&vectors, &vector.identity));
-        let aliases: Vec<_> = vector
-            .aliases
-            .iter()
-            .map(|fixture| alias(fixture.id, &fixture.address))
-            .collect();
-        let mut ciphers: Vec<_> = vector.ciphers.iter().map(cipher).collect();
-        let before = ciphers.clone();
-
-        let plan = plan_alias_reconciliation(&provider, &aliases, &ciphers)
-            .expect("proved reconciliation must plan");
-        assert_eq!(
-            plan.summary.proposed_repairs, vector.expected.proposed_repairs,
-            "{}",
-            vector.name
-        );
-        let applied = apply_alias_reconciliation(&plan, &aliases, &mut ciphers)
-            .expect("proved reconciliation must apply");
-        let changed: Vec<String> = applied
-            .changed_cipher_ids
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        assert_eq!(
-            changed, vector.expected.changed_cipher_ids,
-            "{}",
-            vector.name
-        );
-        assert_eq!(
-            unrelated_projection(&ciphers[0]),
-            unrelated_projection(&before[0]),
-            "{}",
-            vector.name
-        );
-        assert_eq!(
-            serde_json::to_value(&ciphers[1]).expect("ordinary cipher must serialize"),
-            serde_json::to_value(&before[1]).expect("ordinary cipher must serialize"),
-            "{}",
-            vector.name
-        );
-
-        let replay = apply_alias_reconciliation(&plan, &aliases, &mut ciphers)
-            .expect("proved reconciliation replay must be a no-op");
-        assert!(replay.changed_cipher_ids.is_empty(), "{}", vector.name);
-        assert_eq!(
-            replay.unchanged_actions, vector.expected.unchanged_actions_on_replay,
-            "{}",
-            vector.name
-        );
-        let replanned = plan_alias_reconciliation(&provider, &aliases, &ciphers)
-            .expect("repaired inventory must replan");
-        assert_eq!(
-            replanned.actions.len(),
-            vector.expected.actions_after_replan,
-            "{}",
-            vector.name
-        );
-    }
-}
-
-#[tokio::test]
-async fn production_lifecycle_executes_the_machine_checked_traces() {
-    let vectors = vectors();
-    for trace in vectors.lifecycle_traces {
-        let server = MockServer::start().await;
-        let steps = Arc::new(trace.steps.clone());
-        let cursor = Arc::new(AtomicUsize::new(0));
-        let enabled = Arc::new(AtomicBool::new(trace.initial_enabled));
-        let toggles = Arc::new(AtomicUsize::new(0));
-
-        let get_steps = Arc::clone(&steps);
-        let get_cursor = Arc::clone(&cursor);
-        let get_enabled = Arc::clone(&enabled);
-        let alias_id = trace.alias_id;
-        Mock::given(matchers::method("GET"))
-            .and(matchers::path(format!("/api/aliases/{alias_id}")))
-            .respond_with(move |_: &wiremock::Request| {
-                let index = get_cursor.fetch_add(1, Ordering::SeqCst);
-                let step = &get_steps[index];
-                assert_eq!(step.kind, "get", "unexpected trace step {index}");
-                get_enabled.store(step.provider_enabled_after, Ordering::SeqCst);
-                ResponseTemplate::new(200)
-                    .set_body_json(alias_json(alias_id, step.provider_enabled_after))
-            })
-            .mount(&server)
-            .await;
-
-        let toggle_steps = Arc::clone(&steps);
-        let toggle_cursor = Arc::clone(&cursor);
-        let toggle_enabled = Arc::clone(&enabled);
-        let toggle_count = Arc::clone(&toggles);
-        Mock::given(matchers::method("POST"))
-            .and(matchers::path(format!("/api/aliases/{alias_id}/toggle")))
-            .respond_with(move |_: &wiremock::Request| {
-                let index = toggle_cursor.fetch_add(1, Ordering::SeqCst);
-                let step = &toggle_steps[index];
-                assert_eq!(step.kind, "toggle", "unexpected trace step {index}");
-                toggle_count.fetch_add(1, Ordering::SeqCst);
-                toggle_enabled.store(step.provider_enabled_after, Ordering::SeqCst);
-                ResponseTemplate::new(200).set_body_json(json!({
-                    "enabled": step.response_enabled.expect("toggle response state")
-                }))
-            })
-            .mount(&server)
-            .await;
-
-        let client = AliasClient::new(
-            AliasClientSettings::new(SensitiveString::from("formal-test-token"))
-                .with_base_url(format!("{}/", server.uri())),
-        )
-        .expect("trace client must construct");
-        let result = client
-            .set_alias_enabled(AliasId(trace.alias_id), trace.desired_enabled)
-            .await;
-
-        match (trace.expected_enabled, trace.expected_error) {
-            (Some(expected), None) => {
-                assert_eq!(
-                    result.expect("successful trace must converge").enabled,
-                    expected,
-                    "{}",
-                    trace.name
-                );
-            }
-            (None, Some(expected)) => {
-                let error = result.expect_err("interference trace must fail safely");
-                assert!(matches!(error, AliasError::ConcurrentMutation { .. }));
-                assert_eq!(error.to_string(), expected, "{}", trace.name);
-            }
-            _ => panic!("{} has an invalid expected result", trace.name),
-        }
-        assert_eq!(cursor.load(Ordering::SeqCst), steps.len(), "{}", trace.name);
-        assert_eq!(
-            toggles.load(Ordering::SeqCst),
-            trace.expected_toggle_count,
-            "{}",
-            trace.name
-        );
-        if let Some(expected) = trace.expected_enabled {
-            assert_eq!(enabled.load(Ordering::SeqCst), expected, "{}", trace.name);
-        }
-    }
-}
-
-#[tokio::test]
-async fn production_delete_refines_non_destructive_and_no_replay_semantics() {
-    let vectors = vectors();
-    assert_eq!(
-        vectors.operation_semantics.disable.provider_resource,
-        "retained"
-    );
-    assert_eq!(
-        vectors.operation_semantics.disable.vault_cipher,
-        "unchanged"
-    );
-    assert_eq!(
-        vectors.operation_semantics.disable.success_evidence,
-        "fresh-read"
-    );
-    assert_eq!(
-        vectors.operation_semantics.delete.provider_resource,
-        "removed-on-provider-confirmation"
-    );
-    assert_eq!(vectors.operation_semantics.delete.vault_cipher, "unchanged");
-    assert_eq!(
-        vectors.operation_semantics.delete.transport_failure,
-        "unknown-no-automatic-replay"
-    );
-
-    let confirmed_id = vectors.operation_semantics.delete.confirmed_alias_id;
-    let server = MockServer::start().await;
-    Mock::given(matchers::method("DELETE"))
-        .and(matchers::path(format!("/api/aliases/{confirmed_id}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"deleted": true})))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let client = AliasClient::new(
-        AliasClientSettings::new(SensitiveString::from("formal-test-token"))
-            .with_base_url(format!("{}/", server.uri())),
-    )
-    .expect("delete client must construct");
-    let vault_cipher = cipher(&vectors.reconciliation_vectors[0].ciphers[0]);
-    let before = serde_json::to_value(&vault_cipher).expect("vault cipher must serialize");
-    let result = client
-        .delete_alias(AliasId(confirmed_id))
-        .await
-        .expect("confirmed delete must succeed");
-    assert!(result.deleted);
-    assert_eq!(
-        serde_json::to_value(&vault_cipher).expect("vault cipher must serialize"),
-        before,
-        "provider deletion must not mutate a vault cipher"
-    );
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("raw listener must bind");
-    let address = listener.local_addr().expect("raw listener address");
-    let raw_server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("first delete must connect");
-        let mut request = [0_u8; 4096];
-        let _ = stream.read(&mut request).expect("request must be readable");
-        drop(stream);
-
-        listener
-            .set_nonblocking(true)
-            .expect("listener must become nonblocking");
-        let deadline = Instant::now() + Duration::from_millis(250);
-        let mut requests = 1;
-        while Instant::now() < deadline {
-            match listener.accept() {
-                Ok((_stream, _)) => requests += 1,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => panic!("unexpected listener error: {error}"),
-            }
-        }
-        requests
-    });
-    let unknown_id = vectors.operation_semantics.delete.unknown_alias_id;
-    let client = AliasClient::new(
-        AliasClientSettings::new(SensitiveString::from("formal-test-token"))
-            .with_base_url(format!("http://{address}/")),
-    )
-    .expect("loopback delete client must construct");
-    let error = client
-        .delete_alias(AliasId(unknown_id))
-        .await
-        .expect_err("lost delete response must be unknown");
-    assert!(matches!(
-        error,
-        AliasError::MutationOutcomeUnknown {
-            operation: "alias deletion"
-        }
-    ));
-    assert_eq!(
-        raw_server.join().expect("raw server must finish"),
-        1,
-        "unknown delete outcome must not be replayed"
-    );
 }

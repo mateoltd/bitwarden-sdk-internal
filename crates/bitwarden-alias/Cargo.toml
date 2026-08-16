@@ -33,6 +33,7 @@ wasm = [
 ]
 
 [dependencies]
+async-trait = { workspace = true }
 bitwarden-api-base = { workspace = true }
 bitwarden-core = { workspace = true }
 bitwarden-sensitive-value = { workspace = true }

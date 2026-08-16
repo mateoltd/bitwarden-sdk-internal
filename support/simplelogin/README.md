@@ -57,10 +57,11 @@ SIMPLELOGIN_HTTP_PORT=27777 \
 support/simplelogin/lab.sh test
 ```
 
-The lifecycle proves create (through the actual Bitwarden generator), list, update, alias toggle,
-delete, contact create/list/toggle/delete, and reverse-alias persistence against both the real HTTP
-API and PostgreSQL. The optional mail phase sends one message through SimpleLogin's email handler to
-a seeded mailbox and one reply through the generated reverse alias, asserting both deliveries in
+The lifecycle runs the real provider-neutral Bitwarden adapter and reconciliation suites, including
+create, list/get, explicit enable/disable, idempotent delete, and send/reply identity management. It
+then checks the corresponding service and database lifecycle directly against both the real HTTP API
+and PostgreSQL. The optional mail phase sends one message through SimpleLogin's email handler to a
+seeded mailbox and one reply through the generated reverse alias, asserting both deliveries in
 Mailpit.
 
 `reset` is the deterministic clean-start operation. `down` removes the containers, network,

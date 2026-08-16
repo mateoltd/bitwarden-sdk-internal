@@ -1,11 +1,23 @@
 # Alias formal security model
 
-This directory contains the normative alias [security contract](SECURITY-CONTRACT.md), two TLA+
-transition systems, the [proof inventory and gap matrix](PROOF-COVERAGE.md), and canonical
-cross-language conformance vectors.
+This directory contains the normative provider-neutral alias
+[security contract](SECURITY-CONTRACT.md), three TLA+ transition systems, the
+[proof inventory and gap matrix](PROOF-COVERAGE.md), and the canonical cross-language
+conformance vectors.
 
-The canonical wire format is the six-field, connection-scoped version 1 schema. All non-version-1
-inputs fail closed; the model and vectors define no development-schema decoder or migration path.
+The version 1 vault reference is exactly the four-field, connection-scoped shape
+`version`, `connectionId`, opaque string `aliasId`, and canonical `address`. Adapter identifier,
+endpoint, credentials, and provider-native data are connection implementation metadata and never
+part of identity. There is no provider enum, legacy decoder, migration shape, or dual schema.
+
+The checked models have separate responsibilities:
+
+- `AliasVault` checks stable identity, exact reference fields, reconciliation authorization and
+  idempotence, vault frame conditions, and connection-metadata and credential exclusion.
+- `AliasJournal` checks connection-scoped causal append, validated set-union merge, deterministic
+  reduction, explicit conflicts and unknown outcomes, and non-resurrecting tombstones.
+- `AliasLifecycle` checks capability-gated desired-state transitions, fresh-read success, replay and
+  unknown-outcome discipline, delete/disable separation, bounded interference, and liveness.
 
 Run the consolidated machine-checked contract with:
 
@@ -13,11 +25,7 @@ Run the consolidated machine-checked contract with:
 scripts/alias-sdk/check-security-contract.sh
 ```
 
-The script downloads TLA+ 1.8.0 from the official release, verifies its pinned SHA-256 digest,
-checks the vault safety model, adversarial concurrent lifecycle model, and reliable/quiescent
-liveness model, then runs the Rust and UniFFI refinement gates. Java 11 or newer and `curl` are
-required.
-
-After building the versioned WASM package, `scripts/alias-sdk/test-wasm-conformance.sh` reads the
-same `conformance-vectors.json` and drives the exported reference/reconciliation functions and
-replay-sensitive lifecycle client.
+The formal script obtains TLA+ 1.8.0 from the official release and verifies its pinned SHA-256
+digest before checking all four configurations. Java 11 or newer and `curl` are required. The
+consolidated gate then runs the Rust and UniFFI refinement tests. Versioned WASM conformance consumes
+the same `conformance-vectors.json`; no copied binding-specific vector is authoritative.
