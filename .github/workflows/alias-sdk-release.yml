@@ -241,13 +241,14 @@ jobs:
 
       - name: Build release package
         env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/swift-target-first
+          CARGO_TARGET_DIR: ${{ runner.temp }}/swift-target
         run: scripts/alias-sdk/build-swift.sh "$RUNNER_TEMP/alias-sdk-swift"
 
       - name: Rebuild and verify normalized package bytes
         env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/swift-target-second
+          CARGO_TARGET_DIR: ${{ runner.temp }}/swift-target
         run: |
+          cargo clean --target-dir "$CARGO_TARGET_DIR"
           scripts/alias-sdk/build-swift.sh "$RUNNER_TEMP/alias-sdk-swift-rebuild"
           scripts/alias-sdk/verify-reproducible.sh \
             "$RUNNER_TEMP/alias-sdk-swift" \
@@ -395,7 +396,7 @@ jobs:
 
       - name: Build native library
         env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/android-target-first
+          CARGO_TARGET_DIR: ${{ runner.temp }}/android-target
           TARGET: ${{ matrix.target }}
         run: cargo bin cross build --locked --package bitwarden-uniffi --release --target="$TARGET"
 
@@ -405,13 +406,14 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p "$RUNNER_TEMP/android-native/$ABI"
-          cp "$RUNNER_TEMP/android-target-first/$TARGET/release/libbitwarden_uniffi.so" \
+          cp "$RUNNER_TEMP/android-target/$TARGET/release/libbitwarden_uniffi.so" \
             "$RUNNER_TEMP/android-native/$ABI/"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/android-target-second" \
+          cargo clean --target-dir "$RUNNER_TEMP/android-target"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/android-target" \
             cargo bin cross build --locked --package bitwarden-uniffi --release --target="$TARGET"
           scripts/alias-sdk/verify-reproducible.sh \
             "$RUNNER_TEMP/android-native/$ABI/libbitwarden_uniffi.so" \
-            "$RUNNER_TEMP/android-target-second/$TARGET/release/libbitwarden_uniffi.so" \
+            "$RUNNER_TEMP/android-target/$TARGET/release/libbitwarden_uniffi.so" \
             >"$RUNNER_TEMP/android-native/$ABI/REPRODUCIBILITY.txt"
 
       - name: Upload native library
