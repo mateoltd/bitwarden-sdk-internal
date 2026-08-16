@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bitwarden_api_api::{
     apis::ciphers_api::CiphersApi,
     models::{CipherBulkShareRequestModel, CipherShareRequestModel},
@@ -51,6 +53,10 @@ async fn share_ciphers_bulk(
     encrypted_ciphers: Vec<EncryptionContext>,
     collection_ids: Vec<CollectionId>,
 ) -> Result<Vec<Cipher>, CipherError> {
+    let outbound_data = encrypted_ciphers
+        .iter()
+        .map(|context| Ok((require!(context.cipher.id), context.cipher.data.clone())))
+        .collect::<Result<HashMap<_, _>, CipherError>>()?;
     let request = CipherBulkShareRequestModel::new(
         collection_ids
             .iter()
@@ -68,13 +74,10 @@ async fn share_ciphers_bulk(
     let mut results = Vec::new();
 
     for cipher_mini in cipher_minis {
+        let cipher_id = CipherId::new(cipher_mini.id.ok_or(MissingFieldError("id"))?);
         // The server does not return the full Cipher object, so we pull the details from the
         // current local version to fill in those missing values.
-        let orig_cipher = repository
-            .get(CipherId::new(
-                cipher_mini.id.ok_or(MissingFieldError("id"))?,
-            ))
-            .await?;
+        let orig_cipher = repository.get(cipher_id).await?;
 
         let cipher: Cipher = Cipher {
             id: cipher_mini.id.map(CipherId::new),
@@ -147,9 +150,13 @@ async fn share_ciphers_bulk(
                 .as_ref()
                 .map(|c| c.view_password)
                 .unwrap_or_default(),
-            local_data: orig_cipher.map(|c| c.local_data).unwrap_or_default(),
+            local_data: orig_cipher
+                .as_ref()
+                .and_then(|cipher| cipher.local_data.clone()),
             collection_ids: collection_ids.clone(),
-            data: None,
+            // Mini responses omit opaque blob data. Retain the exact freshly encrypted outbound
+            // blob, not the potentially stale pre-share repository value.
+            data: outbound_data.get(&cipher_id).cloned().flatten(),
         };
 
         repository.set(require!(cipher.id), cipher.clone()).await?;
@@ -325,6 +332,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -525,6 +533,7 @@ mod tests {
                 login: Some(Login {
                     username: Some("2.EI9Km5BfrIqBa1W+WCccfA==|laWxNnx+9H3MZww4zm7cBSLisjpi81zreaQntRhegVI=|x42+qKFf5ga6DIL0OW5pxCdLrC/gm8CXJvf3UASGteI=".parse().unwrap()),
                     password: Some("2.EI9Km5BfrIqBa1W+WCccfA==|laWxNnx+9H3MZww4zm7cBSLisjpi81zreaQntRhegVI=|x42+qKFf5ga6DIL0OW5pxCdLrC/gm8CXJvf3UASGteI=".parse().unwrap()),
+                    alias_reference: None,
                     password_revision_date: None,
                     uris: None,
                     totp: None,
@@ -691,6 +700,7 @@ mod tests {
                 login: Some(crate::cipher::Login {
                     username: Some("2.EI9Km5BfrIqBa1W+WCccfA==|laWxNnx+9H3MZww4zm7cBSLisjpi81zreaQntRhegVI=|x42+qKFf5ga6DIL0OW5pxCdLrC/gm8CXJvf3UASGteI=".parse().unwrap()),
                     password: Some("2.EI9Km5BfrIqBa1W+WCccfA==|laWxNnx+9H3MZww4zm7cBSLisjpi81zreaQntRhegVI=|x42+qKFf5ga6DIL0OW5pxCdLrC/gm8CXJvf3UASGteI=".parse().unwrap()),
+                    alias_reference: None,
                     password_revision_date: None,
                     uris: None,
                     totp: None,
@@ -725,7 +735,7 @@ mod tests {
                 deleted_date: None,
                 revision_date: "2024-01-30T17:55:36.150Z".parse().unwrap(),
                 archived_date: None,
-                data: None,
+                data: Some("stale-pre-share-blob".to_owned()),
             };
 
         repository
@@ -733,7 +743,8 @@ mod tests {
             .await
             .unwrap();
 
-        let encryption_context = create_encryption_context();
+        let mut encryption_context = create_encryption_context();
+        encryption_context.cipher.data = Some("freshly-encrypted-share-blob".to_owned());
         let collection_ids: Vec<CollectionId> = vec![
             TEST_COLLECTION_ID_1.parse().unwrap(),
             TEST_COLLECTION_ID_2.parse().unwrap(),
@@ -760,6 +771,10 @@ mod tests {
             Some(TEST_ORG_ID.to_string())
         );
         assert_eq!(shared_cipher.collection_ids, collection_ids);
+        assert_eq!(
+            shared_cipher.data.as_deref(),
+            Some("freshly-encrypted-share-blob")
+        );
 
         // Verify the cipher was updated in repository
         let stored_cipher = repository
@@ -770,6 +785,10 @@ mod tests {
 
         assert_eq!(stored_cipher.id, shared_cipher.id);
         assert!(stored_cipher.favorite); // Should preserve from original
+        assert_eq!(
+            stored_cipher.data.as_deref(),
+            Some("freshly-encrypted-share-blob")
+        );
     }
 
     #[tokio::test]

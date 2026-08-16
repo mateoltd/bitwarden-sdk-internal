@@ -46,6 +46,21 @@ pub fn should_use_blob_encryption(
     organization_id.is_none() && ctx.get_security_state_version() >= BLOB_SECURITY_VERSION
 }
 
+/// Selects the sealed-blob format for a concrete cipher view.
+///
+/// Alias references have no legacy server field and are required to remain encrypted and hidden,
+/// so an alias-bound login always uses the server's opaque encrypted `data` field. Other ciphers
+/// retain the staged security-version selection above.
+pub(crate) fn should_use_blob_encryption_for_view(
+    ctx: &KeyStoreContext<KeySlotIds>,
+    view: &CipherView,
+) -> bool {
+    view.login
+        .as_ref()
+        .is_some_and(|login| login.alias_reference.is_some())
+        || should_use_blob_encryption(ctx, view.organization_id)
+}
+
 #[allow(missing_docs)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct CiphersClient {
@@ -74,12 +89,9 @@ impl FromClient for CiphersClient {
 #[allow(deprecated)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl CiphersClient {
-    pub(crate) fn should_use_blob_encryption(
-        &self,
-        organization_id: Option<OrganizationId>,
-    ) -> bool {
+    pub(crate) fn should_use_blob_encryption_for_view(&self, view: &CipherView) -> bool {
         let key_store = self.client.internal.get_key_store();
-        should_use_blob_encryption(&key_store.context(), organization_id)
+        should_use_blob_encryption_for_view(&key_store.context(), view)
     }
 
     #[allow(missing_docs)]
@@ -102,7 +114,7 @@ impl CiphersClient {
             cipher_view.generate_cipher_key(&mut key_store.context(), key)?;
         }
 
-        let mode = if self.should_use_blob_encryption(cipher_view.organization_id) {
+        let mode = if self.should_use_blob_encryption_for_view(&cipher_view) {
             EncryptMode::Blob(cipher_view)
         } else {
             EncryptMode::Legacy(cipher_view)
@@ -155,7 +167,7 @@ impl CiphersClient {
         // Rotation installs the new key under a `Local` slot id (`new_key_id`), not the view's
         // natural `User`/`Organization` slot — so pass it explicitly to `encrypt_composite` rather
         // than going through `key_store.encrypt`, which uses the view's natural key identifier.
-        let mode = if self.should_use_blob_encryption(cipher_view.organization_id) {
+        let mode = if self.should_use_blob_encryption_for_view(&cipher_view) {
             EncryptMode::Blob(cipher_view)
         } else {
             EncryptMode::Legacy(cipher_view)
@@ -194,7 +206,7 @@ impl CiphersClient {
                     let key = cv.key_identifier();
                     cv.generate_cipher_key(&mut ctx, key)?;
                 }
-                let mode = if self.should_use_blob_encryption(cv.organization_id) {
+                let mode = if self.should_use_blob_encryption_for_view(&cv) {
                     EncryptMode::Blob(cv)
                 } else {
                     EncryptMode::Legacy(cv)
@@ -364,10 +376,9 @@ mod tests {
     use bitwarden_crypto::{CryptoError, SymmetricKeyAlgorithm};
 
     use super::*;
-    use crate::{
-        Attachment, CipherRepromptType, CipherType, Login, VaultClientExt,
-        cipher::blob::try_parse_blob,
-    };
+    #[cfg(feature = "wasm")]
+    use crate::cipher::blob::try_parse_blob;
+    use crate::{Attachment, CipherRepromptType, CipherType, Login, VaultClientExt};
 
     fn test_cipher() -> Cipher {
         Cipher {
@@ -382,6 +393,7 @@ mod tests {
             login: Some(Login{
                 username: None,
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris:None,
                 totp: None,
@@ -421,6 +433,7 @@ mod tests {
             login: Some(crate::LoginView {
                 username: Some("test_username".to_string()),
                 password: Some("test_password".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -500,6 +513,7 @@ mod tests {
                 login: Some(Login{
                     username: Some("2.ouEYEk+SViUtqncesfe9Ag==|iXzEJq1zBeNdDbumFO1dUA==|RqMoo9soSwz/yB99g6YPqk8+ASWRcSdXsKjbwWzyy9U=".parse().unwrap()),
                     password: Some("2.6yXnOz31o20Z2kiYDnXueA==|rBxTb6NK9lkbfdhrArmacw==|ogZir8Z8nLgiqlaLjHH+8qweAtItS4P2iPv1TELo5a0=".parse().unwrap()),
+                    alias_reference: None,
                     password_revision_date: None, uris:None, totp: None, autofill_on_page_load: None, fido2_credentials: None }),
                 identity: None,
                 card: None,
@@ -922,7 +936,8 @@ mod tests {
             .get_key_store()
             .set_security_state_version(BLOB_SECURITY_VERSION);
 
-        assert!(client.vault().ciphers().should_use_blob_encryption(None));
+        let key_store = client.internal.get_key_store();
+        assert!(should_use_blob_encryption(&key_store.context(), None));
     }
 
     #[tokio::test]
@@ -930,7 +945,8 @@ mod tests {
         let client = Client::init_test_account(test_bitwarden_com_account()).await;
         // Default KeyStore security_state_version is 1, below BLOB_SECURITY_VERSION (2).
 
-        assert!(!client.vault().ciphers().should_use_blob_encryption(None));
+        let key_store = client.internal.get_key_store();
+        assert!(!should_use_blob_encryption(&key_store.context(), None));
     }
 
     #[tokio::test]
@@ -942,12 +958,11 @@ mod tests {
             .set_security_state_version(BLOB_SECURITY_VERSION);
         let org_id: OrganizationId = "1bc9ac1e-f5aa-45f2-94bf-b181009709b8".parse().unwrap();
 
-        assert!(
-            !client
-                .vault()
-                .ciphers()
-                .should_use_blob_encryption(Some(org_id))
-        );
+        let key_store = client.internal.get_key_store();
+        assert!(!should_use_blob_encryption(
+            &key_store.context(),
+            Some(org_id)
+        ));
     }
 
     /// At `BLOB_SECURITY_VERSION`, personal ciphers encrypt through the blob

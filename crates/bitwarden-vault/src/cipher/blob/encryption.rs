@@ -354,6 +354,7 @@ mod tests {
         view.login = Some(LoginView {
             username: Some("user".to_string()),
             password: Some("pass".to_string()),
+            alias_reference: Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string()),
             password_revision_date: None,
             uris: None,
             totp: None,
@@ -425,6 +426,7 @@ mod tests {
             view.login = Some(LoginView {
                 username: Some("user".to_string()),
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -534,6 +536,7 @@ mod tests {
         view.login = Some(LoginView {
             username: Some("testuser@example.com".to_string()),
             password: Some("p@ssw0rd".to_string()),
+            alias_reference: Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string()),
             password_revision_date: None,
             uris: None,
             totp: None,
@@ -568,6 +571,10 @@ mod tests {
         let login = restored.login.unwrap();
         assert_eq!(login.username, Some("testuser@example.com".to_string()));
         assert_eq!(login.password, Some("p@ssw0rd".to_string()));
+        assert_eq!(
+            login.alias_reference,
+            Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string())
+        );
 
         let fields = restored.fields.unwrap();
         assert_eq!(fields.len(), 1);

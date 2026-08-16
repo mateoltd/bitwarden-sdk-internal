@@ -82,6 +82,7 @@ impl CipherBlobV1 {
                 CipherTypeDataV1::Login(LoginDataV1 {
                     username: login.username.clone(),
                     password: login.password.clone(),
+                    alias_reference: login.alias_reference.clone(),
                     password_revision_date: login.password_revision_date,
                     uris: login
                         .uris
@@ -203,6 +204,7 @@ impl CipherBlobV1 {
                 view.login = Some(LoginView {
                     username: login_data.username.clone(),
                     password: login_data.password.clone(),
+                    alias_reference: login_data.alias_reference.clone(),
                     password_revision_date: login_data.password_revision_date,
                     uris: none_if_empty(login_data.uris.iter().map(LoginUriView::from).collect()),
                     totp: login_data.totp.clone(),
@@ -353,6 +355,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("user".to_string()),
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

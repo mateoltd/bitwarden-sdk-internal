@@ -15,7 +15,7 @@ use crate::{
         cipher_client::create::convert_request_to_cipher_view,
     },
     cipher_client::{
-        admin::CipherAdminClient, create::CipherCreateRequest, should_use_blob_encryption,
+        admin::CipherAdminClient, create::CipherCreateRequest, should_use_blob_encryption_for_view,
     },
 };
 
@@ -50,11 +50,8 @@ async fn create_cipher(
     let folder_id = view.folder_id;
     let favorite = view.favorite;
 
-    // Admin endpoints operate on organization-owned ciphers, which aren't
-    // expected to use blob encryption yet — `should_use_blob_encryption`
-    // returns `false` for any `Some(org)` today. Routing through the same
-    // dispatcher means org blob support (PM-32430) flips on automatically
-    // here when the helper learns to return `true` for orgs.
+    // Organization ciphers normally follow the staged blob rollout. An alias reference overrides
+    // that selection because it has no legacy wire field and must remain in opaque encrypted data.
     let mode = if use_blob {
         EncryptMode::Blob(view)
     } else {
@@ -113,7 +110,7 @@ impl CipherAdminClient {
             view.generate_cipher_key(&mut key_store.context(), key)?;
         }
 
-        let use_blob = should_use_blob_encryption(&key_store.context(), view.organization_id);
+        let use_blob = should_use_blob_encryption_for_view(&key_store.context(), &view);
 
         create_cipher(
             view,
@@ -197,6 +194,7 @@ mod tests {
             r#type: CipherViewType::Login(LoginView {
                 username: None,
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

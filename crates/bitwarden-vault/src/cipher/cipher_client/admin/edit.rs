@@ -19,7 +19,7 @@ use crate::{
     cipher::cipher::{EncryptMode, PartialCipher, StrictDecrypt},
     cipher_client::{
         edit::{CipherEditRequest, convert_request_to_cipher_view},
-        should_use_blob_encryption,
+        should_use_blob_encryption_for_view,
     },
 };
 
@@ -77,11 +77,8 @@ async fn edit_cipher(
         view.generate_cipher_key(&mut key_store.context(), key)?;
     }
 
-    // Admin endpoints operate on organization-owned ciphers, which aren't
-    // expected to use blob encryption yet — `should_use_blob_encryption`
-    // returns `false` for any `Some(org)` today. Routing through the same
-    // dispatcher means org blob support (PM-32430) flips on automatically
-    // here when the helper learns to return `true` for orgs.
+    // Organization ciphers normally follow the staged blob rollout. An alias reference overrides
+    // that selection because it has no legacy wire field and must remain in opaque encrypted data.
     let mode = if use_blob {
         EncryptMode::Blob(view)
     } else {
@@ -163,7 +160,8 @@ impl CipherAdminClient {
         let enable_cipher_key_encryption =
             self.client.flags().get().await.enable_cipher_key_encryption;
 
-        let use_blob = should_use_blob_encryption(&key_store.context(), request.organization_id);
+        let view = convert_request_to_cipher_view(request.clone());
+        let use_blob = should_use_blob_encryption_for_view(&key_store.context(), &view);
 
         edit_cipher(
             key_store,
@@ -220,6 +218,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

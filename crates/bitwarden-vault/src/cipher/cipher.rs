@@ -2185,6 +2185,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test_username".to_string()),
                 password: Some("test_password".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -2261,6 +2262,7 @@ mod tests {
             login: Some(Login {
                 username: Some("2.EBNGgnaMHeO/kYnI3A0jiA==|9YXlrgABP71ebZ5umurCJQ==|GDk5jxiqTYaU7e2AStCFGX+a1kgCIk8j0NEli7Jn0L4=".parse().unwrap()),
                 password: Some("2.M7ZJ7EuFDXCq66gDTIyRIg==|B1V+jroo6+m/dpHx6g8DxA==|PIXPBCwyJ1ady36a7jbcLg346pm/7N/06W4UZxc1TUo=".parse().unwrap()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: Some("2.hqdioUAc81FsKQmO1XuLQg==|oDRdsJrQjoFu9NrFVy8tcJBAFKBx95gHaXZnWdXbKpsxWnOr2sKipIG43pKKUFuq|3gKZMiboceIB5SLVOULKg2iuyu6xzos22dfJbvx0EHk=".parse().unwrap()),
@@ -3680,6 +3682,7 @@ mod tests {
             view.login = Some(LoginView {
                 username: Some("alice@example.com".to_string()),
                 password: Some("hunter2".to_string()),
+                alias_reference: Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string()),
                 password_revision_date: None,
                 uris: None,
                 totp: Some("otpauth://totp/test?secret=SECRET".to_string()),
@@ -4203,6 +4206,7 @@ mod tests {
             view.login = Some(LoginView {
                 username: Some("alice@example.com".to_string()),
                 password: Some("hunter2".to_string()),
+                alias_reference: Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string()),
                 password_revision_date: None,
                 uris: None,
                 totp: None,

@@ -268,7 +268,8 @@ impl CiphersClient {
         let enable_cipher_key_encryption =
             self.client.flags().get().await.enable_cipher_key_encryption;
 
-        let use_blob = self.should_use_blob_encryption(request.organization_id);
+        let view = convert_request_to_cipher_view(request.clone());
+        let use_blob = self.should_use_blob_encryption_for_view(&view);
 
         edit_cipher(
             key_store,
@@ -376,6 +377,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -442,6 +444,7 @@ mod tests {
                         .map(|p| p.encrypt(&mut ctx, SymmetricKeySlotId::User))
                         .transpose()
                         .unwrap(),
+                    alias_reference: None,
                     password_revision_date: None,
                     uris: None,
                     totp: None,
