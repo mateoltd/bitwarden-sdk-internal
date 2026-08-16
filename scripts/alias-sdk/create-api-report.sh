@@ -29,7 +29,7 @@ write_header() {
 report_text_sources() {
     source_root="$1"
     shift
-    mapfile_path="$temporary_directory/sources"
+    mapfile_path="$(mktemp "$temporary_directory/public-source-files.XXXXXX")"
     find "$source_root" -type f "$@" -print | LC_ALL=C sort >"$mapfile_path"
     [[ -s "$mapfile_path" ]] || {
         echo "API report failed: no public definition sources found for $platform" >&2
