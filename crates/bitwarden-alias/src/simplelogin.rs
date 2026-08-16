@@ -4,14 +4,11 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 
-use bitwarden_core::Client;
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use http::{HeaderValue, Method, StatusCode, header};
 #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-#[cfg(feature = "wasm")]
-use tsify::Tsify;
 use url::{Host, Url};
 #[cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
 use wasm_bindgen::{JsCast, JsValue};
@@ -19,109 +16,89 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
 use crate::{
-    Alias, AliasCreationOptions, AliasDomain, AliasError, AliasId, AliasPage,
-    AliasProviderIdentity, AliasRecommendation, AliasReference, AliasState, ContactId,
-    ContactState, CreateCustomAliasRequest, CreateRandomAliasRequest, CustomDomain, CustomDomainId,
-    DeleteAliasResult, DeleteContactResult, ListAliasesRequest, Mailbox, ReverseAlias,
-    ReverseAliasPage, SearchAliasesRequest, UpdateAliasRequest, UpdateCustomDomainRequest,
-    is_safe_email_address,
+    simplelogin_error::SimpleLoginError as AliasError,
+    simplelogin_models::{
+        Alias, AliasFilter, AliasId, AliasPage, ContactId, CreateRandomAliasRequest,
+        DeleteAliasResult, DeleteContactResult, ListAliasesRequest, ReverseAlias, ReverseAliasPage,
+        is_safe_email_address,
+    },
 };
-
-/// Default SimpleLogin service base URL.
-pub const SIMPLELOGIN_DEFAULT_BASE_URL: &str = "https://app.simplelogin.io/";
 
 const MAX_SUCCESS_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_ERROR_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_MAILBOX_IDS: usize = 20;
 const MAX_TOGGLE_CONVERGENCE_ATTEMPTS: usize = 3;
-const MAX_ALIAS_PREFIX_BYTES: usize = 40;
+const MAX_CONTACT_LOOKUP_PAGES: u32 = 32;
 const MAX_HOSTNAME_BYTES: usize = 253;
 const MAX_NAME_BYTES: usize = 128;
 const MAX_NOTE_BYTES: usize = 16 * 1024;
-const MAX_SEARCH_QUERY_BYTES: usize = 4 * 1024;
-const MAX_SIGNED_SUFFIX_BYTES: usize = 4 * 1024;
 const MAX_PROVIDER_DATE_BYTES: usize = 128;
 
-type AliasStateLocks =
-    Mutex<HashMap<(String, Option<String>, AliasId), Weak<tokio::sync::Mutex<()>>>>;
+type AliasStateLocks = Mutex<HashMap<(String, String, AliasId), Weak<tokio::sync::Mutex<()>>>>;
+type ContactStateLocks =
+    Mutex<HashMap<(String, String, AliasId, ContactId), Weak<tokio::sync::Mutex<()>>>>;
 
 /// SimpleLogin only exposes a toggle endpoint. Serialize explicit state changes by provider and
 /// stable ID across every client in this process so concurrent callers cannot double-toggle an
 /// alias back to its original state. Weak entries keep the global map bounded.
 static ALIAS_STATE_LOCKS: OnceLock<AliasStateLocks> = OnceLock::new();
+static CONTACT_STATE_LOCKS: OnceLock<ContactStateLocks> = OnceLock::new();
 
-/// Configuration used to connect an [`AliasClient`] to SimpleLogin.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
-#[cfg_attr(feature = "wasm", derive(Tsify), tsify(from_wasm_abi))]
+/// Runtime-only configuration for the concrete SimpleLogin adapter.
+///
+/// This type is deliberately excluded from generated definitions. Hosts persist the endpoint and
+/// credential only in encrypted connection metadata and inject a configured adapter at runtime.
 #[derive(Deserialize)]
-pub struct AliasClientSettings {
+pub struct SimpleLoginAdapterSettings {
     /// SimpleLogin base URL, without an API path.
     pub base_url: String,
     /// SimpleLogin API key sent in the `Authentication` header.
     pub api_token: SensitiveString,
-    /// Stable non-secret UUID v4 assigned to this provider account by the consuming client.
-    ///
-    /// This is optional for generator operations that do not create persisted vault references.
-    /// Reference creation and reconciliation require it.
-    #[serde(default)]
-    pub connection_id: Option<String>,
+    /// Stable non-secret UUID v4 assigned to this authorization by the consuming client.
+    pub connection_id: String,
 }
 
-impl fmt::Debug for AliasClientSettings {
+impl fmt::Debug for SimpleLoginAdapterSettings {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("AliasClientSettings")
+            .debug_struct("SimpleLoginAdapterSettings")
             .field("base_url", &"[REDACTED]")
             .field("api_token", &self.api_token)
             .finish()
     }
 }
 
-impl AliasClientSettings {
-    /// Creates settings for the hosted SimpleLogin service.
-    pub fn new(api_token: SensitiveString) -> Self {
+impl SimpleLoginAdapterSettings {
+    /// Creates settings for one explicitly configured SimpleLogin connection.
+    pub fn new(connection_id: String, base_url: String, api_token: SensitiveString) -> Self {
         Self {
-            base_url: SIMPLELOGIN_DEFAULT_BASE_URL.to_owned(),
+            base_url,
             api_token,
-            connection_id: None,
+            connection_id,
         }
-    }
-
-    /// Associates these settings with a stable, client-persisted provider connection UUID v4.
-    pub fn with_connection_id(mut self, connection_id: String) -> Self {
-        self.connection_id = Some(connection_id);
-        self
-    }
-
-    /// Overrides the service base URL, primarily for self-hosted SimpleLogin instances.
-    pub fn with_base_url(mut self, base_url: String) -> Self {
-        self.base_url = base_url;
-        self
     }
 }
 
-struct AliasClientInner {
+struct SimpleLoginTransportInner {
     http: reqwest::Client,
     base_url: Url,
     api_token: SensitiveString,
-    connection_id: Option<String>,
+    connection_id: String,
 }
 
 /// Client for the complete SimpleLogin alias lifecycle.
 #[derive(Clone)]
-pub struct AliasClient {
-    inner: Arc<AliasClientInner>,
+pub(crate) struct SimpleLoginTransport {
+    inner: Arc<SimpleLoginTransportInner>,
 }
 
-impl AliasClient {
+impl SimpleLoginTransport {
     /// Creates a standalone alias client using the SDK's standard TLS configuration.
-    pub fn new(settings: AliasClientSettings) -> Result<Self, AliasError> {
+    pub(crate) fn new(settings: SimpleLoginAdapterSettings) -> Result<Self, AliasError> {
         let base_url = validate_base_url(&settings.base_url)?;
         validate_token(&settings.api_token)?;
-        if let Some(connection_id) = settings.connection_id.as_deref() {
-            AliasProviderIdentity::from_simplelogin_url(&base_url, connection_id)
-                .map_err(|_| AliasError::InvalidConnectionIdentity)?;
-        }
+        crate::models::validate_random_id(&settings.connection_id)
+            .map_err(|_| AliasError::InvalidConnectionIdentity)?;
         let http = bitwarden_api_base::new_http_client_builder();
         #[cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))]
         // Lifecycle mutations are not universally replay-safe (creation and toggle in
@@ -134,7 +111,7 @@ impl AliasClient {
             .map_err(|error| AliasError::Transport(error.without_url()))?;
 
         Ok(Self {
-            inner: Arc::new(AliasClientInner {
+            inner: Arc::new(SimpleLoginTransportInner {
                 http,
                 base_url,
                 api_token: settings.api_token,
@@ -143,22 +120,8 @@ impl AliasClient {
         })
     }
 
-    /// Returns the stable provider identity used to namespace vault alias references.
-    pub fn provider_identity(&self) -> Result<AliasProviderIdentity, crate::AliasReferenceError> {
-        let connection_id = self
-            .inner
-            .connection_id
-            .as_deref()
-            .ok_or(crate::AliasReferenceError::MissingConnectionIdentity)?;
-        AliasProviderIdentity::from_simplelogin_url(&self.inner.base_url, connection_id)
-    }
-
-    /// Creates a versioned vault reference for alias data returned by this client.
-    pub fn alias_reference(
-        &self,
-        alias: &Alias,
-    ) -> Result<AliasReference, crate::AliasReferenceError> {
-        AliasReference::new(&self.provider_identity()?, alias)
+    pub(crate) fn connection_id(&self) -> Result<&str, AliasError> {
+        Ok(&self.inner.connection_id)
     }
 
     /// Creates a random alias and returns its stable identity and full lifecycle data.
@@ -200,111 +163,9 @@ impl AliasClient {
         Ok(alias)
     }
 
-    /// Creates a custom alias with SimpleLogin's signed-suffix v3 API.
-    pub async fn create_custom_alias(
-        &self,
-        request: CreateCustomAliasRequest,
-    ) -> Result<Alias, AliasError> {
-        validate_request_mailbox_ids(&request.mailbox_ids)?;
-        validate_alias_prefix(&request.alias_prefix)?;
-        validate_signed_suffix(&request.signed_suffix)?;
-        validate_optional_hostname(request.hostname.as_ref())?;
-        validate_optional_sensitive_length(
-            request.note.as_ref(),
-            MAX_NOTE_BYTES,
-            "alias note is too large",
-        )?;
-        validate_optional_name(request.name.as_ref(), "alias name is invalid or too large")?;
-
-        #[derive(Serialize)]
-        struct Body<'a> {
-            alias_prefix: &'a str,
-            signed_suffix: &'a SensitiveString,
-            mailbox_ids: &'a [crate::MailboxId],
-            #[serde(skip_serializing_if = "Option::is_none")]
-            note: Option<&'a SensitiveString>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            name: Option<&'a SensitiveString>,
-        }
-
-        let mut query = Vec::new();
-        if let Some(hostname) = request.hostname.as_ref() {
-            query.push(("hostname", hostname.expose().as_str()));
-        }
-        let builder = self
-            .request(Method::POST, "api/v3/alias/custom/new")?
-            .query(&query)
-            .json(&Body {
-                alias_prefix: &request.alias_prefix,
-                signed_suffix: &request.signed_suffix,
-                mailbox_ids: &request.mailbox_ids,
-                note: request.note.as_ref(),
-                name: request.name.as_ref(),
-            });
-        let alias = self
-            .send_json(builder, Some("custom-alias creation"))
-            .await?;
-        validate_mutation_response(validate_alias(&alias), "custom-alias creation")?;
-        Ok(alias)
-    }
-
-    /// Gets creation suffixes, a prefix suggestion, and any alias recommendation for a hostname.
-    pub async fn get_alias_options(
-        &self,
-        hostname: Option<&SensitiveString>,
-    ) -> Result<AliasCreationOptions, AliasError> {
-        validate_optional_hostname(hostname)?;
-        let mut query = Vec::new();
-        if let Some(hostname) = hostname {
-            query.push(("hostname", hostname.expose().as_str()));
-        }
-        let builder = self
-            .request(Method::GET, "api/v5/alias/options")?
-            .query(&query);
-        let options = self.send_json(builder, None).await?;
-        validate_alias_options(&options, hostname)?;
-        Ok(options)
-    }
-
-    /// Gets the most recently associated alias for a hostname, when SimpleLogin recommends one.
-    pub async fn get_alias_recommendation(
-        &self,
-        hostname: &SensitiveString,
-    ) -> Result<Option<AliasRecommendation>, AliasError> {
-        Ok(self.get_alias_options(Some(hostname)).await?.recommendation)
-    }
-
     /// Lists a page of aliases, optionally filtered by lifecycle state.
     pub async fn list_aliases(&self, request: ListAliasesRequest) -> Result<AliasPage, AliasError> {
         let builder = self.alias_list_request(Method::GET, request.page, request.filter)?;
-        let response: AliasesResponse = self.send_json(builder, None).await?;
-        validate_alias_page(&response.aliases)?;
-        Ok(AliasPage {
-            page: request.page,
-            aliases: response.aliases,
-        })
-    }
-
-    /// Searches aliases by address, note, and name.
-    pub async fn search_aliases(
-        &self,
-        request: SearchAliasesRequest,
-    ) -> Result<AliasPage, AliasError> {
-        validate_sensitive_length(
-            &request.query,
-            MAX_SEARCH_QUERY_BYTES,
-            "alias search query is too large",
-        )?;
-        #[derive(Serialize)]
-        struct Body<'a> {
-            query: &'a SensitiveString,
-        }
-
-        let builder = self
-            .alias_list_request(Method::POST, request.page, request.filter)?
-            .json(&Body {
-                query: &request.query,
-            });
         let response: AliasesResponse = self.send_json(builder, None).await?;
         validate_alias_page(&response.aliases)?;
         Ok(AliasPage {
@@ -327,60 +188,20 @@ impl AliasClient {
         Ok(alias)
     }
 
-    /// Updates mutable alias fields and returns refreshed lifecycle data.
-    pub async fn update_alias(
-        &self,
-        alias_id: AliasId,
-        request: UpdateAliasRequest,
-    ) -> Result<Alias, AliasError> {
-        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
-        if request.is_empty() {
-            return Err(AliasError::InvalidRequest(
-                "alias update requires at least one field",
-            ));
-        }
-        if let Some(mailbox_ids) = request.mailbox_ids.as_ref() {
-            validate_request_mailbox_ids(mailbox_ids)?;
-        }
-        if let Some(Some(note)) = request.note.as_ref() {
-            validate_sensitive_length(note, MAX_NOTE_BYTES, "alias note is too large")?;
-        }
-        if let Some(Some(name)) = request.name.as_ref() {
-            validate_name(name, "alias name is invalid or too large")?;
-        }
-        let builder = self
-            .request(Method::PATCH, &format!("api/aliases/{alias_id}"))?
-            .json(&request);
-        let response: OkResponse = self.send_json(builder, Some("alias update")).await?;
-        if !response.ok {
-            return Err(AliasError::MutationResponseInvalid {
-                operation: "alias update",
-            });
-        }
-        self.get_alias(alias_id)
-            .await
-            .map_err(|_| AliasError::MutationCommittedButRefreshFailed {
-                operation: "alias update",
-            })
-    }
-
     /// Explicitly enables or disables an alias without accidentally toggling an already-correct
     /// state.
     pub async fn set_alias_enabled(
         &self,
         alias_id: AliasId,
         enabled: bool,
-    ) -> Result<AliasState, AliasError> {
+    ) -> Result<Alias, AliasError> {
         validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
         let state_lock = self.alias_state_lock(alias_id);
         let _guard = state_lock.lock().await;
         let mut current = self.get_alias(alias_id).await?;
         for _ in 0..MAX_TOGGLE_CONVERGENCE_ATTEMPTS {
             if current.enabled == enabled {
-                return Ok(AliasState {
-                    id: alias_id,
-                    enabled,
-                });
+                return Ok(current);
             }
 
             let builder = self.request(Method::POST, &format!("api/aliases/{alias_id}/toggle"))?;
@@ -397,24 +218,11 @@ impl AliasClient {
             })?;
         }
         if current.enabled == enabled {
-            return Ok(AliasState {
-                id: alias_id,
-                enabled,
-            });
+            return Ok(current);
         }
         Err(AliasError::ConcurrentMutation {
             operation: "alias state change",
         })
-    }
-
-    /// Enables an alias if it is disabled.
-    pub async fn enable_alias(&self, alias_id: AliasId) -> Result<AliasState, AliasError> {
-        self.set_alias_enabled(alias_id, true).await
-    }
-
-    /// Disables an alias if it is enabled.
-    pub async fn disable_alias(&self, alias_id: AliasId) -> Result<AliasState, AliasError> {
-        self.set_alias_enabled(alias_id, false).await
     }
 
     /// Deletes an alias.
@@ -426,85 +234,6 @@ impl AliasClient {
             id: alias_id,
             deleted: response.deleted,
         })
-    }
-
-    /// Lists domains currently available for random alias generation.
-    pub async fn list_domains(&self) -> Result<Vec<AliasDomain>, AliasError> {
-        let builder = self.request(Method::GET, "api/v2/setting/domains")?;
-        let domains: Vec<AliasDomain> = self.send_json(builder, None).await?;
-        if domains
-            .iter()
-            .any(|domain| !is_safe_provider_identifier(domain.domain.expose(), 253))
-        {
-            return Err(AliasError::InvalidResponseValue(
-                "provider returned an invalid alias domain",
-            ));
-        }
-        Ok(domains)
-    }
-
-    /// Lists all custom domains owned by the authenticated account.
-    pub async fn list_custom_domains(&self) -> Result<Vec<CustomDomain>, AliasError> {
-        let builder = self.request(Method::GET, "api/custom_domains")?;
-        let response: CustomDomainsResponse = self.send_json(builder, None).await?;
-        validate_unique_nonzero_ids(response.custom_domains.iter().map(|domain| domain.id.0))?;
-        for domain in &response.custom_domains {
-            validate_custom_domain(domain)?;
-        }
-        Ok(response.custom_domains)
-    }
-
-    /// Updates a custom domain and returns the refreshed domain data supplied by SimpleLogin.
-    pub async fn update_custom_domain(
-        &self,
-        domain_id: CustomDomainId,
-        request: UpdateCustomDomainRequest,
-    ) -> Result<CustomDomain, AliasError> {
-        validate_request_id(domain_id.0, "custom-domain identifier must be non-zero")?;
-        if request.is_empty() {
-            return Err(AliasError::InvalidRequest(
-                "custom-domain update requires at least one field",
-            ));
-        }
-        if let Some(mailbox_ids) = request.mailbox_ids.as_ref() {
-            validate_request_mailbox_ids(mailbox_ids)?;
-        }
-        if let Some(Some(name)) = request.name.as_ref() {
-            validate_name(name, "custom-domain name is invalid or too large")?;
-        }
-        let builder = self
-            .request(Method::PATCH, &format!("api/custom_domains/{domain_id}"))?
-            .json(&request);
-        let response: CustomDomainResponse = self
-            .send_json(builder, Some("custom-domain update"))
-            .await?;
-        validate_mutation_response(
-            validate_custom_domain(&response.custom_domain),
-            "custom-domain update",
-        )?;
-        if response.custom_domain.id != domain_id {
-            return Err(AliasError::MutationResponseInvalid {
-                operation: "custom-domain update",
-            });
-        }
-        Ok(response.custom_domain)
-    }
-
-    /// Lists all account mailboxes, including unverified mailboxes.
-    pub async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, AliasError> {
-        let builder = self.request(Method::GET, "api/v2/mailboxes")?;
-        let response: MailboxesResponse = self.send_json(builder, None).await?;
-        validate_unique_nonzero_ids(response.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
-        if response
-            .mailboxes
-            .iter()
-            .any(|mailbox| !is_safe_email_address(mailbox.email.expose()))
-        {
-            return Err(AliasError::InvalidResponseValue(
-                "provider returned an invalid mailbox address",
-            ));
-        }
-        Ok(response.mailboxes)
     }
 
     /// Lists contacts and their reverse aliases for an alias.
@@ -524,15 +253,6 @@ impl AliasClient {
             page,
             contacts: response.contacts,
         })
-    }
-
-    /// Lists contacts for an alias. Each contact includes its reverse alias.
-    pub async fn list_contacts(
-        &self,
-        alias_id: AliasId,
-        page: u32,
-    ) -> Result<ReverseAliasPage, AliasError> {
-        self.list_reverse_aliases(alias_id, page).await
     }
 
     /// Creates or retrieves the reverse alias for a contact.
@@ -559,28 +279,43 @@ impl AliasClient {
         Ok(contact)
     }
 
-    /// Creates a contact and returns the reverse alias assigned to it.
-    pub async fn create_contact(
-        &self,
-        alias_id: AliasId,
-        contact: SensitiveString,
-    ) -> Result<ReverseAlias, AliasError> {
-        self.create_reverse_alias(alias_id, contact).await
-    }
-
-    /// Toggles whether a contact is blocked and returns the provider's resulting state.
-    pub async fn toggle_contact_blocked(
-        &self,
-        contact_id: ContactId,
-    ) -> Result<ContactState, AliasError> {
+    async fn toggle_contact_blocked(&self, contact_id: ContactId) -> Result<bool, AliasError> {
         validate_request_id(contact_id.0, "contact identifier must be non-zero")?;
         let builder = self.request(Method::POST, &format!("api/contacts/{contact_id}/toggle"))?;
         let response: ToggleContactResponse = self
             .send_json(builder, Some("contact state toggle"))
             .await?;
-        Ok(ContactState {
-            id: contact_id,
-            block_forward: response.block_forward,
+        Ok(response.block_forward)
+    }
+
+    /// Explicitly sets contact blocking without accidentally toggling an already-correct state.
+    pub async fn set_contact_blocked(
+        &self,
+        alias_id: AliasId,
+        contact_id: ContactId,
+        blocked: bool,
+    ) -> Result<ReverseAlias, AliasError> {
+        validate_request_id(alias_id.0, "alias identifier must be non-zero")?;
+        validate_request_id(contact_id.0, "contact identifier must be non-zero")?;
+        let state_lock = self.contact_state_lock(alias_id, contact_id);
+        let _guard = state_lock.lock().await;
+        let mut current = self.find_contact(alias_id, contact_id).await?;
+        for _ in 0..MAX_TOGGLE_CONVERGENCE_ATTEMPTS {
+            if current.block_forward == blocked {
+                return Ok(current);
+            }
+            self.toggle_contact_blocked(contact_id).await?;
+            current = self.find_contact(alias_id, contact_id).await.map_err(|_| {
+                AliasError::MutationCommittedButRefreshFailed {
+                    operation: "contact state change",
+                }
+            })?;
+        }
+        if current.block_forward == blocked {
+            return Ok(current);
+        }
+        Err(AliasError::ConcurrentMutation {
+            operation: "contact state change",
         })
     }
 
@@ -602,7 +337,7 @@ impl AliasClient {
         &self,
         method: Method,
         page: u32,
-        filter: Option<crate::AliasFilter>,
+        filter: Option<AliasFilter>,
     ) -> Result<reqwest::RequestBuilder, AliasError> {
         let mut builder = self
             .request(method, "api/v2/aliases")?
@@ -620,6 +355,53 @@ impl AliasClient {
             alias_id,
         );
         let mut locks = ALIAS_STATE_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
+    async fn find_contact(
+        &self,
+        alias_id: AliasId,
+        contact_id: ContactId,
+    ) -> Result<ReverseAlias, AliasError> {
+        for page in 0..MAX_CONTACT_LOOKUP_PAGES {
+            let mut contacts = self.list_reverse_aliases(alias_id, page).await?.contacts;
+            if let Some(contact) = contacts
+                .iter()
+                .position(|contact| contact.id == contact_id)
+                .map(|index| contacts.swap_remove(index))
+            {
+                return Ok(contact);
+            }
+            if contacts.is_empty() {
+                return Err(AliasError::Provider { status: 404 });
+            }
+        }
+        Err(AliasError::InvalidResponseValue(
+            "contact lookup exceeded the bounded page limit",
+        ))
+    }
+
+    fn contact_state_lock(
+        &self,
+        alias_id: AliasId,
+        contact_id: ContactId,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        let key = (
+            self.inner.base_url.as_str().to_owned(),
+            self.inner.connection_id.clone(),
+            alias_id,
+            contact_id,
+        );
+        let mut locks = CONTACT_STATE_LOCKS
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -826,18 +608,6 @@ impl AliasClient {
     }
 }
 
-/// Extension trait exposing alias operations on the SDK [`Client`].
-pub trait AliasClientExt {
-    /// Creates an [`AliasClient`] configured for a SimpleLogin account.
-    fn aliases(&self, settings: AliasClientSettings) -> Result<AliasClient, AliasError>;
-}
-
-impl AliasClientExt for Client {
-    fn aliases(&self, settings: AliasClientSettings) -> Result<AliasClient, AliasError> {
-        AliasClient::new(settings)
-    }
-}
-
 fn validate_base_url(value: &str) -> Result<Url, AliasError> {
     let mut url =
         Url::parse(value).map_err(|_| AliasError::InvalidBaseUrl("URL cannot be parsed"))?;
@@ -918,79 +688,13 @@ fn validate_optional_hostname(hostname: Option<&SensitiveString>) -> Result<(), 
     Ok(())
 }
 
-fn validate_sensitive_length(
-    value: &SensitiveString,
-    max_bytes: usize,
-    message: &'static str,
-) -> Result<(), AliasError> {
-    if value.expose().len() > max_bytes {
-        return Err(AliasError::InvalidRequest(message));
-    }
-    Ok(())
-}
-
 fn validate_optional_sensitive_length(
     value: Option<&SensitiveString>,
     max_bytes: usize,
     message: &'static str,
 ) -> Result<(), AliasError> {
-    value.map_or(Ok(()), |value| {
-        validate_sensitive_length(value, max_bytes, message)
-    })
-}
-
-fn validate_name(value: &SensitiveString, message: &'static str) -> Result<(), AliasError> {
-    if value.expose().len() > MAX_NAME_BYTES || value.expose().chars().any(char::is_control) {
+    if value.is_some_and(|value| value.expose().len() > max_bytes) {
         return Err(AliasError::InvalidRequest(message));
-    }
-    Ok(())
-}
-
-fn validate_optional_name(
-    value: Option<&SensitiveString>,
-    message: &'static str,
-) -> Result<(), AliasError> {
-    value.map_or(Ok(()), |value| validate_name(value, message))
-}
-
-fn validate_alias_prefix(value: &str) -> Result<(), AliasError> {
-    if value.is_empty()
-        || value.len() > MAX_ALIAS_PREFIX_BYTES
-        || !value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
-        })
-    {
-        return Err(AliasError::InvalidRequest(
-            "alias prefix must use at most 40 letters, numbers, dots, dashes, or underscores",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_signed_suffix(value: &SensitiveString) -> Result<(), AliasError> {
-    if value.expose().is_empty()
-        || value.expose().len() > MAX_SIGNED_SUFFIX_BYTES
-        || value
-            .expose()
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-    {
-        return Err(AliasError::InvalidRequest(
-            "signed alias suffix is invalid or too large",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_request_mailbox_ids(ids: &[crate::MailboxId]) -> Result<(), AliasError> {
-    let mut seen = HashSet::with_capacity(ids.len().min(MAX_MAILBOX_IDS));
-    if ids.is_empty()
-        || ids.len() > MAX_MAILBOX_IDS
-        || ids.iter().any(|id| id.0 == 0 || !seen.insert(id.0))
-    {
-        return Err(AliasError::InvalidRequest(
-            "mailbox lists require 1 to 20 unique non-zero identifiers",
-        ));
     }
     Ok(())
 }
@@ -1090,47 +794,6 @@ fn validate_alias(alias: &Alias) -> Result<(), AliasError> {
     Ok(())
 }
 
-fn validate_alias_options(
-    options: &AliasCreationOptions,
-    requested_hostname: Option<&SensitiveString>,
-) -> Result<(), AliasError> {
-    if options.prefix_suggestion.len() > MAX_ALIAS_PREFIX_BYTES
-        || options
-            .prefix_suggestion
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-        || options.suffixes.iter().any(|suffix| {
-            suffix.suffix.expose().len() > 1024
-                || suffix.suffix.expose().chars().any(char::is_control)
-                || suffix.signed_suffix.expose().len() > MAX_SIGNED_SUFFIX_BYTES
-                || suffix.signed_suffix.expose().chars().any(char::is_control)
-        })
-    {
-        return Err(AliasError::InvalidResponseValue(
-            "provider returned invalid alias creation options",
-        ));
-    }
-    if let Some(recommendation) = options.recommendation.as_ref()
-        && (!is_safe_email_address(recommendation.alias.expose())
-            || !is_safe_provider_identifier(recommendation.hostname.expose(), 253)
-            || requested_hostname
-                .is_some_and(|hostname| hostname.expose() != recommendation.hostname.expose()))
-    {
-        return Err(AliasError::InvalidResponseValue(
-            "provider returned an invalid alias recommendation",
-        ));
-    }
-    Ok(())
-}
-
-fn is_safe_provider_identifier(value: &str, max_bytes: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max_bytes
-        && !value
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-}
-
 fn is_safe_provider_text(value: &str, max_bytes: usize) -> bool {
     !value.is_empty() && value.len() <= max_bytes && !value.chars().any(char::is_control)
 }
@@ -1139,36 +802,6 @@ fn validate_alias_page(aliases: &[Alias]) -> Result<(), AliasError> {
     validate_unique_nonzero_ids(aliases.iter().map(|alias| alias.id.0))?;
     for alias in aliases {
         validate_alias(alias)?;
-    }
-    Ok(())
-}
-
-fn validate_custom_domain(domain: &CustomDomain) -> Result<(), AliasError> {
-    validate_unique_nonzero_ids(std::iter::once(domain.id.0))?;
-    if !is_safe_provider_identifier(domain.domain_name.expose(), 253)
-        || !is_safe_provider_text(&domain.creation_date, MAX_PROVIDER_DATE_BYTES)
-        || domain.name.as_ref().is_some_and(|name| {
-            name.expose().len() > MAX_NAME_BYTES || name.expose().chars().any(char::is_control)
-        })
-    {
-        return Err(AliasError::InvalidResponseValue(
-            "provider returned an invalid custom domain",
-        ));
-    }
-    if domain.mailboxes.len() > MAX_MAILBOX_IDS {
-        return Err(AliasError::InvalidResponseValue(
-            "provider returned too many custom-domain mailboxes",
-        ));
-    }
-    validate_unique_nonzero_ids(domain.mailboxes.iter().map(|mailbox| mailbox.id.0))?;
-    if domain
-        .mailboxes
-        .iter()
-        .any(|mailbox| !is_safe_email_address(mailbox.email.expose()))
-    {
-        return Err(AliasError::InvalidResponseValue(
-            "provider returned an invalid mailbox address",
-        ));
     }
     Ok(())
 }
@@ -1376,26 +1009,6 @@ struct ToggleAliasResponse {
 #[derive(Deserialize)]
 struct DeletedResponse {
     deleted: bool,
-}
-
-#[derive(Deserialize)]
-struct OkResponse {
-    ok: bool,
-}
-
-#[derive(Deserialize)]
-struct CustomDomainsResponse {
-    custom_domains: Vec<CustomDomain>,
-}
-
-#[derive(Deserialize)]
-struct CustomDomainResponse {
-    custom_domain: CustomDomain,
-}
-
-#[derive(Deserialize)]
-struct MailboxesResponse {
-    mailboxes: Vec<Mailbox>,
 }
 
 #[derive(Deserialize)]

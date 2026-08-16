@@ -8,6 +8,14 @@ use crate::{Sensitive, SensitiveSlice, sensitive::ExposeSensitive};
 /// is enabled.
 pub struct SensitiveString(Sensitive<String>);
 
+impl Clone for SensitiveString {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl Eq for SensitiveString {}
+
 impl From<&str> for Sensitive<String> {
     fn from(value: &str) -> Self {
         Self(value.to_string())

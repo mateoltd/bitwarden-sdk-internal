@@ -1,100 +1,177 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(feature = "wasm")]
+use tsify::Tsify;
 
-/// Errors returned by alias lifecycle operations.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Error), uniffi(flat_error))]
+/// Maximum accepted provider retry hint in seconds.
+pub const MAX_RETRY_AFTER_SECONDS: u64 = 86_400;
+
+/// Stable provider-neutral error category shared by every alias adapter and platform binding.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AliasErrorCode {
+    /// Encrypted vault state is unavailable.
+    VaultLocked,
+    /// The requested encrypted connection metadata is unavailable.
+    ConnectionMissing,
+    /// The provider rejected the injected credential.
+    AuthenticationRejected,
+    /// The connection is not authorized for the requested resource or operation.
+    PermissionDenied,
+    /// The injected adapter does not expose a required capability.
+    CapabilityUnsupported,
+    /// Caller input is invalid.
+    InvalidInput,
+    /// The requested provider resource does not exist.
+    NotFound,
+    /// The provider account cannot create another resource.
+    QuotaExhausted,
+    /// The provider requested backoff.
+    RateLimited,
+    /// No provider connection is currently available.
+    Offline,
+    /// The provider operation timed out.
+    Timeout,
+    /// The provider service is temporarily unavailable.
+    ServiceUnavailable,
+    /// Adapter output violated the provider-neutral contract.
+    InvalidResponse,
+    /// A mutation may have committed and must be reconciled before replay.
+    OutcomeUnknown,
+    /// Concurrent facts require explicit resolution.
+    SyncConflict,
+    /// A local adapter, callback, or serialization security check failed.
+    LocalSecurityFailure,
+}
+
+impl AliasErrorCode {
+    /// Canonical wire spelling used by journals, telemetry allowlists, and clients.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::VaultLocked => "vault-locked",
+            Self::ConnectionMissing => "connection-missing",
+            Self::AuthenticationRejected => "authentication-rejected",
+            Self::PermissionDenied => "permission-denied",
+            Self::CapabilityUnsupported => "capability-unsupported",
+            Self::InvalidInput => "invalid-input",
+            Self::NotFound => "not-found",
+            Self::QuotaExhausted => "quota-exhausted",
+            Self::RateLimited => "rate-limited",
+            Self::Offline => "offline",
+            Self::Timeout => "timeout",
+            Self::ServiceUnavailable => "service-unavailable",
+            Self::InvalidResponse => "invalid-response",
+            Self::OutcomeUnknown => "outcome-unknown",
+            Self::SyncConflict => "sync-conflict",
+            Self::LocalSecurityFailure => "local-security-failure",
+        }
+    }
+}
+
+/// Safe alias failure. It contains no provider body, URL, credential, address, recipient, label,
+/// adapter identifier, or stable resource identifier.
+#[cfg_attr(feature = "uniffi", derive(uniffi::Error))]
 #[derive(Debug, Error)]
 pub enum AliasError {
-    /// Client settings or an operation request is invalid.
-    #[error("invalid alias client request: {0}")]
-    InvalidRequest(&'static str),
-    /// The provider API base URL is invalid.
-    #[error("invalid alias provider URL: {0}")]
-    InvalidBaseUrl(&'static str),
-    /// The authentication token cannot be represented as an HTTP header.
-    #[error("invalid alias provider authentication token")]
-    InvalidAuthenticationToken,
-    /// The supplied connection identity is not a canonical UUID v4.
-    #[error("invalid alias provider connection identity")]
-    InvalidConnectionIdentity,
-    /// The provider attempted an authenticated redirect. Redirect locations are deliberately not
-    /// rendered because they can contain sensitive data.
-    #[error("alias provider redirect rejected (HTTP {status})")]
-    RedirectRejected {
-        /// Redirect status code.
-        status: u16,
-    },
-    /// The provider rejected authentication.
-    #[error("alias provider authentication failed")]
-    AuthenticationFailed,
-    /// The provider rate limit was reached.
-    #[error("alias provider rate limit reached")]
+    /// Encrypted vault state is unavailable.
+    #[error("alias operation failed: vault-locked")]
+    VaultLocked,
+    /// The requested encrypted connection metadata is unavailable.
+    #[error("alias operation failed: connection-missing")]
+    ConnectionMissing,
+    /// The provider rejected the injected credential.
+    #[error("alias operation failed: authentication-rejected")]
+    AuthenticationRejected,
+    /// The connection is not authorized for the requested resource or operation.
+    #[error("alias operation failed: permission-denied")]
+    PermissionDenied,
+    /// The injected adapter does not expose a required capability.
+    #[error("alias operation failed: capability-unsupported")]
+    CapabilityUnsupported,
+    /// Caller input is invalid.
+    #[error("alias operation failed: invalid-input")]
+    InvalidInput,
+    /// The requested provider resource does not exist.
+    #[error("alias operation failed: not-found")]
+    NotFound,
+    /// The provider account cannot create another resource.
+    #[error("alias operation failed: quota-exhausted")]
+    QuotaExhausted,
+    /// The provider requested backoff.
+    #[error("alias operation failed: rate-limited")]
     RateLimited {
-        /// Provider retry hint, when it is a valid number of seconds.
+        /// Validated provider retry hint in seconds, when supplied.
         retry_after_seconds: Option<u64>,
     },
-    /// The provider returned an unsuccessful response.
-    ///
-    /// Provider-controlled response text is deliberately omitted because it can reflect API keys,
-    /// alias inputs, or terminal control sequences into application logs.
-    #[error("alias provider request failed (HTTP {status})")]
-    Provider {
-        /// HTTP response status.
-        status: u16,
-    },
-    /// A lifecycle mutation was dispatched, but a transport failure made its final state unknown.
-    /// Callers must reconcile state instead of blindly replaying the operation.
-    #[error("alias provider {operation} outcome is unknown after a transport failure")]
-    MutationOutcomeUnknown {
-        /// Safe operation label containing no provider or user data.
-        operation: &'static str,
-    },
-    /// The provider confirmed a mutation, but the SDK could not refresh the resulting resource.
-    /// Replaying the mutation is unsafe; callers should retry only the corresponding read.
-    #[error("alias provider {operation} succeeded, but its result could not be refreshed")]
-    MutationCommittedButRefreshFailed {
-        /// Safe operation label containing no provider or user data.
-        operation: &'static str,
-    },
-    /// The provider returned success for a mutation, but its response could not be validated.
-    /// The operation may have committed and must be reconciled instead of replayed.
-    #[error("alias provider {operation} returned an invalid response after reporting success")]
-    MutationResponseInvalid {
-        /// Safe operation label containing no provider or user data.
-        operation: &'static str,
-    },
-    /// Concurrent actors prevented a toggle-only API from converging on the requested state.
-    #[error(
-        "alias provider {operation} did not converge because the resource changed concurrently"
-    )]
-    ConcurrentMutation {
-        /// Safe operation label containing no provider or user data.
-        operation: &'static str,
-    },
-    /// A provider response exceeded the SDK limit.
-    #[error("alias provider response exceeded the {limit_bytes}-byte limit")]
-    ResponseTooLarge {
-        /// Maximum accepted response size.
-        limit_bytes: usize,
-    },
-    /// A successful provider response was not JSON.
-    #[error("alias provider returned a non-JSON response")]
-    UnexpectedContentType,
-    /// A successful provider response did not match the SimpleLogin API contract.
-    #[error("invalid alias provider response")]
-    InvalidResponse(#[source] serde_json::Error),
-    /// A provider response was valid JSON but reported an impossible lifecycle result.
-    #[error("invalid alias provider response: {0}")]
-    InvalidResponseValue(&'static str),
-    /// The HTTP request failed. URLs are removed before this error is retained or rendered.
-    #[error("alias provider transport failed: {0}")]
-    Transport(#[source] reqwest::Error),
+    /// No provider connection is currently available.
+    #[error("alias operation failed: offline")]
+    Offline,
+    /// The provider operation timed out.
+    #[error("alias operation failed: timeout")]
+    Timeout,
+    /// The provider service is temporarily unavailable.
+    #[error("alias operation failed: service-unavailable")]
+    ServiceUnavailable,
+    /// Adapter output violated the provider-neutral contract.
+    #[error("alias operation failed: invalid-response")]
+    InvalidResponse,
+    /// A mutation may have committed and must be reconciled before replay.
+    #[error("alias operation failed: outcome-unknown")]
+    OutcomeUnknown,
+    /// Concurrent facts require explicit resolution.
+    #[error("alias operation failed: sync-conflict")]
+    SyncConflict,
+    /// A local adapter, callback, or serialization security check failed.
+    #[error("alias operation failed: local-security-failure")]
+    LocalSecurityFailure,
+}
+
+impl AliasError {
+    /// Returns the stable category without exposing adapter details.
+    pub const fn code(&self) -> AliasErrorCode {
+        match self {
+            Self::VaultLocked => AliasErrorCode::VaultLocked,
+            Self::ConnectionMissing => AliasErrorCode::ConnectionMissing,
+            Self::AuthenticationRejected => AliasErrorCode::AuthenticationRejected,
+            Self::PermissionDenied => AliasErrorCode::PermissionDenied,
+            Self::CapabilityUnsupported => AliasErrorCode::CapabilityUnsupported,
+            Self::InvalidInput => AliasErrorCode::InvalidInput,
+            Self::NotFound => AliasErrorCode::NotFound,
+            Self::QuotaExhausted => AliasErrorCode::QuotaExhausted,
+            Self::RateLimited { .. } => AliasErrorCode::RateLimited,
+            Self::Offline => AliasErrorCode::Offline,
+            Self::Timeout => AliasErrorCode::Timeout,
+            Self::ServiceUnavailable => AliasErrorCode::ServiceUnavailable,
+            Self::InvalidResponse => AliasErrorCode::InvalidResponse,
+            Self::OutcomeUnknown => AliasErrorCode::OutcomeUnknown,
+            Self::SyncConflict => AliasErrorCode::SyncConflict,
+            Self::LocalSecurityFailure => AliasErrorCode::LocalSecurityFailure,
+        }
+    }
+
+    pub(crate) fn sanitized(self) -> Self {
+        match self {
+            Self::RateLimited {
+                retry_after_seconds: Some(value),
+            } if value > MAX_RETRY_AFTER_SECONDS => Self::InvalidResponse,
+            value => value,
+        }
+    }
+}
+
+impl core::fmt::Display for AliasErrorCode {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[cfg(feature = "wasm")]
 impl From<AliasError> for wasm_bindgen::JsValue {
     fn from(error: AliasError) -> Self {
         let js_error = js_sys::Error::new(&error.to_string());
-        js_error.set_name("AliasError");
+        js_error.set_name(error.code().as_str());
         js_error.into()
     }
 }
