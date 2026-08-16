@@ -1,6 +1,7 @@
 {
-  "repository": "https://github.com/bitwarden/clients.git",
-  "commit": "dcf474cd0e75ab5db798023157f543f0f217dcb9",
+  "repository": "https://github.com/mateoltd/bitwarden-clients.git",
+  "branch": "integration/public-alias-clients",
+  "commit": "4f6804e8c44b482bece57654afaa23980c71332a",
   "node": ">=24.17.0",
   "typescript": "5.9.3",
   "compilerOptions": {

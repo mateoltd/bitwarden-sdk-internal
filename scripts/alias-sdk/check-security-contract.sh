@@ -6,6 +6,6 @@ cd "$repository_root"
 
 ./formal/alias-security/check.sh
 cargo test --locked --package bitwarden-alias --all-features
-cargo test --locked --package bitwarden-uniffi security_conformance
+cargo test --locked --package bitwarden-uniffi --test security_conformance
 
 echo "Alias SDK formal, Rust, and UniFFI security contract passed"

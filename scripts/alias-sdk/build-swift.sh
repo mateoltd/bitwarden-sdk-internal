@@ -35,6 +35,7 @@ printf '%s\n' "$alias_reference_schema_version" \
 
 archive="$output_directory/bitwarden-alias-sdk-swift-${release_version}.tar.gz"
 COPYFILE_DISABLE=1 tar -C "$package_directory" -czf "$archive" .
+"$repository_root/scripts/alias-sdk/normalize-archive.sh" tar-gz "$archive"
 cp "$package_directory/VERSION" "$output_directory/VERSION"
 cp "$package_directory/PACKAGE_VERSION" "$output_directory/PACKAGE_VERSION"
 cp "$package_directory/ALIAS_REFERENCE_SCHEMA_VERSION" "$output_directory/ALIAS_REFERENCE_SCHEMA_VERSION"

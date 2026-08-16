@@ -2,7 +2,7 @@
 # shared map keeps cross-component imports stable when UniFFI generates one
 # component at a time.
 [bindings.kotlin.external_packages]
-bitwarden_alias = "uniffi.bitwarden_alias"
+bitwarden_alias = "com.bitwarden.alias"
 bitwarden_api_base = "com.bitwarden.api.base"
 bitwarden_auth = "com.bitwarden.auth"
 bitwarden_collections = "com.bitwarden.collections"

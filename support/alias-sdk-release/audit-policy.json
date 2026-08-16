@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "advisoryId": "RUSTSEC-2023-0071",
+      "package": "rsa",
+      "version": "0.10.0-rc.18",
+      "dependencyPath": "bitwarden-crypto -> rsa",
+      "reviewedOn": "2026-08-14",
+      "expiresOn": "2026-10-01",
+      "riskOwner": "SDK Security Engineering",
+      "rationale": "RustSec lists no patched rsa release. Alias operations do not invoke RSA private-key operations, and SDK private-key operations execute on the local client without an alias-provider timing oracle.",
+      "limitation": "This exception does not cover a consumer that exposes SDK RSA private-key timing to a remote observer. Replace or re-assess the dependency before this date or when a constant-time release becomes available."
+    }
+  ]
+}

@@ -33,6 +33,12 @@ output_directory="$(mkdir -p "$output_directory" && cd "$output_directory" && pw
     cd "$repository_root/crates/bitwarden-wasm-internal/npm"
     npm pack --ignore-scripts --pack-destination "$output_directory"
 )
+package_archive="$(find "$output_directory" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+[[ -n "$package_archive" ]] || {
+    echo "WASM release gate failed: npm pack produced no package archive" >&2
+    exit 1
+}
+"$repository_root/scripts/alias-sdk/normalize-archive.sh" tar-gz "$package_archive"
 cp "$repository_root/crates/bitwarden-wasm-internal/npm/VERSION" "$output_directory/VERSION"
 printf '%s\n' "$release_version" >"$output_directory/PACKAGE_VERSION"
 printf '%s\n' "$alias_reference_schema_version" \
