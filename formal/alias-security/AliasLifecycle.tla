@@ -1,26 +1,30 @@
 ---------------------------- MODULE AliasLifecycle ----------------------------
 EXTENDS Naturals, TLC
 
-CONSTANTS Connections, AliasIds, Actors, MaxAttempts, NoValue
+CONSTANTS Connections, AliasIds, Actors, MaxAttempts, NoValue, CapabilityConnection
 
 Resources == Connections \X AliasIds
 Operations == {"setEnabled", "delete"}
 ReadStates == {"read", "verify"}
-TerminalStates == {"success", "denied", "notFound", "interference", "unknown"}
+TerminalStates ==
+    {"success", "denied", "unsupported", "notFound", "interference", "unknown"}
 ProgramCounters == ReadStates \cup TerminalStates \cup {"toggle", "response", "delete"}
 
 VARIABLES enabled, deleted, operation, target, connection, desired, pc,
           observed, response, attempts, mutationCount, deleteRequests,
           successFromRead, unknownAtCount, lastMutationTarget,
-          lastMutationConnection, lastAction, beforeEnabled, beforeDeleted
+          lastMutationConnection, connectionCapabilities, lastAction,
+          beforeEnabled, beforeDeleted
 
 variables ==
     <<enabled, deleted, operation, target, connection, desired, pc,
       observed, response, attempts, mutationCount, deleteRequests,
       successFromRead, unknownAtCount, lastMutationTarget,
-      lastMutationConnection, lastAction, beforeEnabled, beforeDeleted>>
+      lastMutationConnection, connectionCapabilities, lastAction,
+      beforeEnabled, beforeDeleted>>
 
 Init ==
+    /\ CapabilityConnection \in Connections
     /\ enabled \in [Resources -> BOOLEAN]
     /\ deleted = {}
     /\ operation \in [Actors -> Operations]
@@ -38,27 +42,44 @@ Init ==
     /\ unknownAtCount = [actor \in Actors |-> 0]
     /\ lastMutationTarget = [actor \in Actors |-> NoValue]
     /\ lastMutationConnection = [actor \in Actors |-> NoValue]
+    /\ connectionCapabilities =
+        [candidate \in Connections |->
+            IF candidate = CapabilityConnection THEN Operations ELSE {}]
     /\ lastAction = "init"
     /\ beforeEnabled = enabled
     /\ beforeDeleted = deleted
 
-Authorized(actor) == connection[actor] = target[actor][1]
+ConnectionScoped(actor) == connection[actor] = target[actor][1]
+CapabilitySupported(actor) == operation[actor] \in connectionCapabilities[connection[actor]]
+Authorized(actor) == ConnectionScoped(actor) /\ CapabilitySupported(actor)
 
 RememberNoProviderChange(action) ==
     /\ beforeEnabled' = enabled
     /\ beforeDeleted' = deleted
     /\ lastAction' = action
 
-DenySet(actor) ==
+DenySetScope(actor) ==
     /\ operation[actor] = "setEnabled"
     /\ pc[actor] \in ReadStates
-    /\ ~Authorized(actor)
+    /\ ~ConnectionScoped(actor)
     /\ pc' = [pc EXCEPT ![actor] = "denied"]
     /\ RememberNoProviderChange("deny")
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     observed, response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
+
+DenySetCapability(actor) ==
+    /\ operation[actor] = "setEnabled"
+    /\ pc[actor] \in ReadStates
+    /\ ConnectionScoped(actor)
+    /\ ~CapabilitySupported(actor)
+    /\ pc' = [pc EXCEPT ![actor] = "unsupported"]
+    /\ RememberNoProviderChange("unsupported")
+    /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
+                    observed, response, attempts, mutationCount, deleteRequests,
+                    successFromRead, unknownAtCount, lastMutationTarget,
+                    lastMutationConnection, connectionCapabilities>>
 
 ReadDeleted(actor) ==
     /\ operation[actor] = "setEnabled"
@@ -70,7 +91,7 @@ ReadDeleted(actor) ==
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     observed, response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
 
 ReadDesired(actor) ==
     /\ operation[actor] = "setEnabled"
@@ -84,7 +105,8 @@ ReadDesired(actor) ==
     /\ RememberNoProviderChange("read")
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     response, attempts, mutationCount, deleteRequests,
-                    unknownAtCount, lastMutationTarget, lastMutationConnection>>
+                    unknownAtCount, lastMutationTarget, lastMutationConnection,
+                    connectionCapabilities>>
 
 ReadNeedsToggle(actor) ==
     /\ operation[actor] = "setEnabled"
@@ -99,7 +121,7 @@ ReadNeedsToggle(actor) ==
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
 
 ReadExhausted(actor) ==
     /\ operation[actor] = "setEnabled"
@@ -114,7 +136,7 @@ ReadExhausted(actor) ==
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
 
 Toggle(actor) ==
     /\ operation[actor] = "setEnabled"
@@ -132,7 +154,8 @@ Toggle(actor) ==
     /\ beforeEnabled' = enabled
     /\ beforeDeleted' = deleted
     /\ UNCHANGED <<deleted, operation, target, connection, desired, observed,
-                    response, deleteRequests, successFromRead, unknownAtCount>>
+                    response, deleteRequests, successFromRead, unknownAtCount,
+                    connectionCapabilities>>
 
 ToggleTargetDeleted(actor) ==
     /\ operation[actor] = "setEnabled"
@@ -144,7 +167,7 @@ ToggleTargetDeleted(actor) ==
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     observed, response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
 
 ToggleOutcomeLost(actor, applied) ==
     /\ operation[actor] = "setEnabled"
@@ -165,7 +188,8 @@ ToggleOutcomeLost(actor, applied) ==
     /\ beforeEnabled' = enabled
     /\ beforeDeleted' = deleted
     /\ UNCHANGED <<deleted, operation, target, connection, desired, observed,
-                    response, deleteRequests, successFromRead>>
+                    response, deleteRequests, successFromRead,
+                    connectionCapabilities>>
 
 ReceiveToggleResponse(actor, reported) ==
     /\ operation[actor] = "setEnabled"
@@ -176,18 +200,30 @@ ReceiveToggleResponse(actor, reported) ==
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     observed, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
 
-DenyDelete(actor) ==
+DenyDeleteScope(actor) ==
     /\ operation[actor] = "delete"
     /\ pc[actor] = "delete"
-    /\ ~Authorized(actor)
+    /\ ~ConnectionScoped(actor)
     /\ pc' = [pc EXCEPT ![actor] = "denied"]
     /\ RememberNoProviderChange("deny")
     /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
                     observed, response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
+
+DenyDeleteCapability(actor) ==
+    /\ operation[actor] = "delete"
+    /\ pc[actor] = "delete"
+    /\ ConnectionScoped(actor)
+    /\ ~CapabilitySupported(actor)
+    /\ pc' = [pc EXCEPT ![actor] = "unsupported"]
+    /\ RememberNoProviderChange("unsupported")
+    /\ UNCHANGED <<enabled, deleted, operation, target, connection, desired,
+                    observed, response, attempts, mutationCount, deleteRequests,
+                    successFromRead, unknownAtCount, lastMutationTarget,
+                    lastMutationConnection, connectionCapabilities>>
 
 DeleteResponse(actor, applied) ==
     /\ operation[actor] = "delete"
@@ -204,7 +240,8 @@ DeleteResponse(actor, applied) ==
     /\ beforeEnabled' = enabled
     /\ beforeDeleted' = deleted
     /\ UNCHANGED <<enabled, operation, target, connection, desired, observed,
-                    response, attempts, successFromRead, unknownAtCount>>
+                    response, attempts, successFromRead, unknownAtCount,
+                    connectionCapabilities>>
 
 DeleteOutcomeLost(actor, applied) ==
     /\ operation[actor] = "delete"
@@ -222,7 +259,8 @@ DeleteOutcomeLost(actor, applied) ==
     /\ beforeEnabled' = enabled
     /\ beforeDeleted' = deleted
     /\ UNCHANGED <<enabled, operation, target, connection, desired, observed,
-                    response, attempts, successFromRead>>
+                    response, attempts, successFromRead,
+                    connectionCapabilities>>
 
 ExternalToggle(resource) ==
     /\ resource \in Resources \ deleted
@@ -233,10 +271,11 @@ ExternalToggle(resource) ==
     /\ UNCHANGED <<deleted, operation, target, connection, desired, pc,
                     observed, response, attempts, mutationCount, deleteRequests,
                     successFromRead, unknownAtCount, lastMutationTarget,
-                    lastMutationConnection>>
+                    lastMutationConnection, connectionCapabilities>>
 
 ClientStep(actor) ==
-    \/ DenySet(actor)
+    \/ DenySetScope(actor)
+    \/ DenySetCapability(actor)
     \/ ReadDeleted(actor)
     \/ ReadDesired(actor)
     \/ ReadNeedsToggle(actor)
@@ -245,12 +284,14 @@ ClientStep(actor) ==
     \/ ToggleTargetDeleted(actor)
     \/ \E applied \in BOOLEAN : ToggleOutcomeLost(actor, applied)
     \/ \E reported \in BOOLEAN : ReceiveToggleResponse(actor, reported)
-    \/ DenyDelete(actor)
+    \/ DenyDeleteScope(actor)
+    \/ DenyDeleteCapability(actor)
     \/ \E applied \in BOOLEAN : DeleteResponse(actor, applied)
     \/ \E applied \in BOOLEAN : DeleteOutcomeLost(actor, applied)
 
 ReliableClientStep(actor) ==
-    \/ DenySet(actor)
+    \/ DenySetScope(actor)
+    \/ DenySetCapability(actor)
     \/ ReadDeleted(actor)
     \/ ReadDesired(actor)
     \/ ReadNeedsToggle(actor)
@@ -258,7 +299,8 @@ ReliableClientStep(actor) ==
     \/ Toggle(actor)
     \/ ToggleTargetDeleted(actor)
     \/ \E reported \in BOOLEAN : ReceiveToggleResponse(actor, reported)
-    \/ DenyDelete(actor)
+    \/ DenyDeleteScope(actor)
+    \/ DenyDeleteCapability(actor)
     \/ \E applied \in BOOLEAN : DeleteResponse(actor, applied)
 
 ClientNext == \E actor \in Actors : ClientStep(actor)
@@ -288,6 +330,7 @@ TypeOK ==
     /\ response \in [Actors -> BOOLEAN \cup {NoValue}]
     /\ attempts \in [Actors -> 0..MaxAttempts]
     /\ deleteRequests \in [Actors -> 0..1]
+    /\ connectionCapabilities \in [Connections -> SUBSET Operations]
 
 StableMutationTarget ==
     \A actor \in Actors :
@@ -297,7 +340,17 @@ StableMutationTarget ==
 
 AuthorizedMutations ==
     \A actor \in Actors :
-        mutationCount[actor] > 0 => connection[actor] = target[actor][1]
+        mutationCount[actor] > 0 => Authorized(actor)
+
+UnsupportedNeverMutates ==
+    \A actor \in Actors :
+        ~CapabilitySupported(actor) => mutationCount[actor] = 0
+
+ExplicitCapabilityFailure ==
+    \A actor \in Actors :
+        /\ (pc[actor] = "unsupported" =>
+                ConnectionScoped(actor) /\ ~CapabilitySupported(actor))
+        /\ (pc[actor] = "denied" => ~ConnectionScoped(actor))
 
 SuccessRequiresVerifiedRead ==
     \A actor \in Actors :

@@ -1,43 +1,62 @@
 # Bitwarden Alias
 
-GPL-only SimpleLogin alias lifecycle support for the Bitwarden SDK.
+GPL-only provider-neutral alias lifecycle support for the Bitwarden SDK.
 
-This crate intentionally contains only the Rust SDK API. Language bindings and commercial packaging
-are maintained separately.
+The common contract is adapter-independent. A stable alias resource is keyed by the random
+connection UUID and a bounded opaque remote identifier. Its canonical address is required display
+and integrity data, never a join key. Adapter identifiers and service endpoints are encrypted
+connection implementation metadata and do not appear in references or journals.
 
-## Transport security
+The canonical version 1 login binding is exactly:
 
-The API token is accepted only as a sensitive value and sent only in the `Authentication` header.
-Authenticated redirects and cookie credentials are disabled, successful responses are capped at 512
-KiB, error responses are capped at 16 KiB, and provider-controlled error text is never rendered.
-Retained read-only transport errors have their request URL removed. Plain HTTP self-hosting is
-accepted only on loopback; other provider instances must use HTTPS. Caller-controlled request
-strings and provider response fields are bounded before serialization or return.
+```json
+{"version":1,"connectionId":"<uuid-v4>","aliasId":"<opaque string>","address":"<canonical address>"}
+```
 
-Lifecycle requests are never automatically replayed. Explicit enable and disable operations are
-serialized by provider instance and stable alias ID across all clients in a process because
-SimpleLogin exposes a toggle rather than a set-state endpoint. A bounded read-toggle reconciliation
-also converges after an observed cross-process race. Transport failures after dispatch return an
-explicit unknown-outcome error so callers do not replay non-idempotent operations, and a confirmed
-update whose refresh fails is reported separately. Provider identities and returned states are
-checked before a mutation is reported as successful.
+Only this shape is accepted. Unknown fields, missing fields, malformed values, non-v1 values, and
+the old unreleased provider-specific form fail closed. Bindings live in the first-class encrypted
+`Login.aliasReference` member, not a hidden custom field.
+
+## Adapter boundary
+
+`AliasProviderAdapter` is an injected provider-neutral SPI with validated extensible adapter and
+capability identifiers. `AliasClient` enforces connection authorization and validates every input
+and output. Provider-native payloads and errors are translated at the boundary. SimpleLogin is one
+real adapter; its numeric identifiers, endpoint, credential, and native models stay private to that
+implementation and are excluded from generated common definitions.
+
+The lifecycle service has no hidden storage. Its host coordinator owns encrypted durable journal
+persistence and explicitly appends prepared, dispatched, and terminal events around lifecycle
+calls. The SDK supplies the closed event schema, validation, canonical merge, reduction, and safe
+error classifications; adapter callbacks must report `outcome-unknown` after an uncertain mutation
+dispatch.
+
+## Lifecycle and convergence
+
+Confirmed lifecycle, operation phase, freshness, and consistency remain separate state axes.
+The host records mutations before dispatch, post-dispatch transport failures become
+`outcome-unknown`, and creates are never blindly replayed. SimpleLogin's alias and optional
+send/reply-block toggle APIs are driven as explicit desired state with bounded read-after-write
+verification. Delete is idempotent on an already-absent remote resource and never deletes or
+rewrites a vault item.
+
+The encrypted append-only journal uses causal events and stable neutral error categories. Its merge
+is deterministic, commutative, associative, and idempotent. Event-ID collisions fail closed;
+acknowledged deletes reduce to tombstones and stale events cannot silently resurrect them.
 
 ## Vault reconciliation
 
-Alias references are stored in the encrypted hidden field `bitwarden.alias.reference`. This is the
-only reserved field name and the value is the canonical JSON emitted by the SDK. Version 1
-namespaces the provider-assigned alias ID by provider, canonical service instance and a stable
-connection ID. The connection ID is a client-generated canonical UUID v4 that is persisted with the
-provider connection; it must never be derived from an API token, password, mailbox credential or any
-other secret. The address remains a last-known snapshot. The provider, instance, connection ID and
-provider alias ID are authoritative. Only version 1 is accepted. Missing, zero, malformed, version
-2, and unknown future versions fail closed; there is no decoder, migration path, or compatibility
-fallback for the unreleased development schema.
+`plan_alias_reconciliation` is a pure dry run over a complete connection-scoped alias inventory and
+decrypted `CipherView` values. It never infers a binding from an address. Duplicate, missing,
+foreign, malformed, and stale cases are explicit. Apply validates the complete plan before its first
+edit and is idempotent. Only the login username and first-class alias reference can change; all
+other cipher data and unrelated vault items are frame-preserved. Callers retain responsibility for
+their normal encryption, transaction, and persistence path.
 
-`plan_alias_reconciliation` is a non-mutating dry run over complete provider alias data and
-decrypted `bitwarden_vault::CipherView` models. It reports exact matches, duplicates, missing
-aliases, stale current bindings, unbound aliases and references that were skipped for safety.
-Ciphers without a current reference are never inferred from their username or address. Only
-`apply_alias_reconciliation` mutates ciphers. It validates every action before the first edit and
-repeated application is idempotent. Bind and apply return decrypted cipher models; consuming clients
-remain responsible for their normal encryption and persistence path.
+## Transport security
+
+The concrete SimpleLogin adapter accepts runtime-only settings. It rejects URL credentials,
+queries, fragments, non-loopback HTTP, authenticated redirects, oversized responses, and unsafe
+provider data. Provider error bodies and request URLs are never retained or rendered. Credentials,
+endpoints, addresses, labels, recipients, stable identifiers, and adapter names are excluded from
+the telemetry record; only coarse operation, platform, neutral category, and success are allowed.

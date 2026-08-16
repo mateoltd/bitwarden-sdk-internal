@@ -37,7 +37,7 @@ fi
 mkdir -p "${MODEL_DIR}"
 cp "${FORMAL_DIR}"/*.tla "${FORMAL_DIR}"/*.cfg "${MODEL_DIR}/"
 
-for config in AliasVault AliasLifecycle AliasLifecycleQuiescent; do
+for config in AliasVault AliasJournal AliasLifecycle AliasLifecycleQuiescent; do
     java -XX:+UseParallelGC -jar "${TLA_JAR}" \
         -cleanup -workers auto -config "${MODEL_DIR}/${config}.cfg" \
         "${MODEL_DIR}/${config%%Quiescent}.tla"

@@ -10,12 +10,10 @@ Addresses == AliasIds \cup {OtherAddress}
 AliasAddress(resource) == resource[2]
 
 Reference(resource, address) ==
-    [version          |-> 1,
-     provider         |-> "simplelogin",
-     providerInstance |-> "canonical-instance",
-     connectionId     |-> resource[1],
-     aliasId          |-> resource[2],
-     address          |-> address]
+    [version      |-> 1,
+     connectionId |-> resource[1],
+     aliasId      |-> resource[2],
+     address      |-> address]
 
 CanonicalReference(resource) == Reference(resource, AliasAddress(resource))
 StaleReference(resource) == Reference(resource, OtherAddress)
@@ -26,15 +24,12 @@ CurrentReferences ==
 
 ReferenceResource(reference) == <<reference.connectionId, reference.aliasId>>
 
-ReferenceSources ==
-    {"schema-version", "provider", "provider-instance", "connection-id",
-     "alias-id", "address"}
+ReferenceSources == {"schema-version", "connection-id", "opaque-alias-id", "address"}
 
 SerializationEvent(reference) ==
     [reference |-> reference, sources |-> ReferenceSources]
 
-ExpectedReferenceFields ==
-    {"version", "provider", "providerInstance", "connectionId", "aliasId", "address"}
+ExpectedReferenceFields == {"version", "connectionId", "aliasId", "address"}
 
 ReferenceVersionInputs == {NoRef, MalformedVersion, 0, 1, 2, 3}
 ReferenceVersionAccepted(version) == version = 1
@@ -159,14 +154,18 @@ StableResourceNamespace ==
              CanonicalReference(<<connectionA, aliasId>>) #
                CanonicalReference(<<connectionB, aliasId>>)
 
+AddressIsNotIdentity ==
+    \A resource \in Resources :
+        ReferenceResource(CanonicalReference(resource)) =
+            ReferenceResource(StaleReference(resource))
+
 AuthorizedWrites ==
     \A cipher \in Ciphers :
         writeCount[cipher] > 0 =>
             /\ writtenResource[cipher][1] = writtenScope[cipher]
             /\ writtenResource[cipher] \in Resources
 
-ReconciliationIdempotent ==
-    \A cipher \in Ciphers : writeCount[cipher] <= 1
+ReconciliationIdempotent == \A cipher \in Ciphers : writeCount[cipher] <= 1
 
 UnrelatedVaultItemsPreserved == unrelated = initialUnrelated
 
@@ -182,6 +181,13 @@ ProviderDisablePreservesVault ==
 
 CanonicalReferenceSchema ==
     \A event \in serializations : DOMAIN event.reference = ExpectedReferenceFields
+
+ConnectionMetadataExcluded ==
+    \A event \in serializations :
+        /\ "adapterId" \notin DOMAIN event.reference
+        /\ "provider" \notin DOMAIN event.reference
+        /\ "providerInstance" \notin DOMAIN event.reference
+        /\ "endpoint" \notin DOMAIN event.reference
 
 ReferenceVersionFailClosed ==
     /\ ReferenceVersionAccepted(1)
