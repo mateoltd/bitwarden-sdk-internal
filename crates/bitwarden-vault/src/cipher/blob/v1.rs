@@ -41,6 +41,8 @@ pub(crate) enum CipherTypeDataV1 {
 pub(crate) struct LoginDataV1 {
     pub username: Option<String>,
     pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_reference: Option<String>,
     pub password_revision_date: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uris: Vec<LoginUriDataV1>,
@@ -252,6 +254,7 @@ mod tests {
             type_data: CipherTypeDataV1::Login(LoginDataV1 {
                 username: Some("testuser@example.com".to_string()),
                 password: Some("p@ssw0rd123".to_string()),
+                alias_reference: None,
                 password_revision_date: Some(Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap()),
                 uris: vec![LoginUriDataV1 {
                     uri: Some("https://example.com/login".to_string()),

@@ -122,6 +122,7 @@ impl From<Login> for bitwarden_vault::LoginView {
         bitwarden_vault::LoginView {
             username: login.username,
             password: login.password,
+            alias_reference: None,
             password_revision_date: None,
             uris: if l.is_empty() { None } else { Some(l) },
             totp: login.totp,
