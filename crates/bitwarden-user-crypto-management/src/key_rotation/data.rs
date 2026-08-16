@@ -329,6 +329,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("user".to_string()),
                 password: Some("pass".to_string()),
+                alias_reference: Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string()),
                 totp: None,
                 uris: None,
                 autofill_on_page_load: None,
@@ -376,6 +377,10 @@ mod tests {
         assert_eq!(
             expected.login.as_ref().unwrap().password,
             decrypted.login.as_ref().unwrap().password
+        );
+        assert_eq!(
+            expected.login.as_ref().unwrap().alias_reference,
+            decrypted.login.as_ref().unwrap().alias_reference
         );
     }
 
