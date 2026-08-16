@@ -533,8 +533,9 @@ jobs:
           release_version="$(scripts/alias-sdk/read-release-version.sh)"
           (
             cd crates/bitwarden-uniffi/kotlin
+            ./gradlew --no-daemon :sdk:clean
             ../../../scripts/alias-sdk/retry-command.sh 3 20 \
-              ./gradlew --no-daemon :sdk:clean :sdk:assembleRelease
+              ./gradlew --no-daemon :sdk:assembleRelease
           )
           mkdir -p "$RUNNER_TEMP/alias-sdk-android-rebuild"
           cp crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar \
