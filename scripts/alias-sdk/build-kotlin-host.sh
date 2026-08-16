@@ -115,6 +115,8 @@ jar_path="$repository_root/support/alias-sdk-release/kotlin-host-sdk/build/libs/
 }
 
 cp "$jar_path" "$output_directory/"
+"$repository_root/scripts/alias-sdk/normalize-archive.sh" zip \
+    "$output_directory/$jar_name"
 cp "$native_path" "$output_directory/"
 git -C "$repository_root" rev-parse HEAD >"$output_directory/VERSION"
 printf '%s\n' "$release_version" >"$output_directory/PACKAGE_VERSION"

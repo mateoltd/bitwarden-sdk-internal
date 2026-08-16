@@ -24,6 +24,7 @@ on:
     branches:
       - "main"
       - "integration/public-alias-sdk"
+      - "refactor/provider-neutral-alias-v1"
 
 permissions:
   contents: read
@@ -84,6 +85,58 @@ jobs:
       - name: Test authoritative alias security contract
         run: scripts/alias-sdk/check-security-contract.sh
 
+  assurance:
+    name: Dependency audit evidence
+    runs-on: ubuntu-24.04
+    needs: policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+          cache: npm
+
+      - name: Install pinned Cargo audit tool
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: Audit locked Rust and JavaScript graphs
+        run: |
+          mkdir -p "$RUNNER_TEMP/alias-sdk-assurance"
+          scripts/alias-sdk/create-cargo-package-list.sh "$RUNNER_TEMP/cargo-active.txt"
+          set +e
+          cargo audit --json >"$RUNNER_TEMP/cargo-audit.json"
+          cargo_audit_exit=$?
+          npm audit --json >"$RUNNER_TEMP/npm-audit.json"
+          npm_audit_exit=$?
+          set -e
+          printf 'cargo-audit-exit=%s\nnpm-audit-exit=%s\n' \
+            "$cargo_audit_exit" "$npm_audit_exit" \
+            >"$RUNNER_TEMP/alias-sdk-assurance/AUDIT-TOOL-STATUS.txt"
+          scripts/alias-sdk/create-audit-report.mjs \
+            "$RUNNER_TEMP/cargo-audit.json" \
+            "$RUNNER_TEMP/npm-audit.json" \
+            "$RUNNER_TEMP/cargo-active.txt" \
+            "support/alias-sdk-release/audit-policy.json" \
+            "$RUNNER_TEMP/alias-sdk-assurance/AUDIT-REPORT.json"
+
+      - name: Upload dependency audit evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-assurance
+          path: ${{ runner.temp }}/alias-sdk-assurance
+          if-no-files-found: error
+          retention-days: 30
+
   wasm:
     name: TypeScript and WASM clean room
     runs-on: ubuntu-24.04
@@ -116,7 +169,21 @@ jobs:
           key: alias-release-wasm
 
       - name: Build release package
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/wasm-target-first
         run: scripts/alias-sdk/build-wasm.sh "$RUNNER_TEMP/alias-sdk-typescript"
+
+      - name: Rebuild and verify normalized package bytes
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/wasm-target-second
+        run: |
+          scripts/alias-sdk/build-wasm.sh "$RUNNER_TEMP/alias-sdk-typescript-rebuild"
+          scripts/alias-sdk/verify-reproducible.sh \
+            "$RUNNER_TEMP/alias-sdk-typescript" \
+            "$RUNNER_TEMP/alias-sdk-typescript-rebuild" \
+            >"$RUNNER_TEMP/alias-sdk-typescript-reproducibility.txt"
+          mv "$RUNNER_TEMP/alias-sdk-typescript-reproducibility.txt" \
+            "$RUNNER_TEMP/alias-sdk-typescript/REPRODUCIBILITY.txt"
 
       - name: Test WASM runtime conformance
         run: scripts/alias-sdk/test-wasm-conformance.sh
@@ -125,6 +192,12 @@ jobs:
         run: |
           package="$(find "$RUNNER_TEMP/alias-sdk-typescript" -maxdepth 1 -name '*.tgz' -print -quit)"
           scripts/alias-sdk/test-consumer.sh typescript "$package"
+
+      - name: Generate TypeScript API report
+        run: |
+          package="$(find "$RUNNER_TEMP/alias-sdk-typescript" -maxdepth 1 -name '*.tgz' -print -quit)"
+          scripts/alias-sdk/create-api-report.sh typescript "$package" \
+            "$RUNNER_TEMP/alias-sdk-typescript/API-REPORT.txt"
 
       - name: Record build environment
         run: |
@@ -167,12 +240,32 @@ jobs:
           key: alias-release-swift
 
       - name: Build release package
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/swift-target-first
         run: scripts/alias-sdk/build-swift.sh "$RUNNER_TEMP/alias-sdk-swift"
+
+      - name: Rebuild and verify normalized package bytes
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/swift-target-second
+        run: |
+          scripts/alias-sdk/build-swift.sh "$RUNNER_TEMP/alias-sdk-swift-rebuild"
+          scripts/alias-sdk/verify-reproducible.sh \
+            "$RUNNER_TEMP/alias-sdk-swift" \
+            "$RUNNER_TEMP/alias-sdk-swift-rebuild" \
+            >"$RUNNER_TEMP/alias-sdk-swift-reproducibility.txt"
+          mv "$RUNNER_TEMP/alias-sdk-swift-reproducibility.txt" \
+            "$RUNNER_TEMP/alias-sdk-swift/REPRODUCIBILITY.txt"
 
       - name: Test clean-room package consumer
         run: |
           package="$(find "$RUNNER_TEMP/alias-sdk-swift" -maxdepth 1 -name '*.tar.gz' -print -quit)"
           scripts/alias-sdk/test-consumer.sh swift "$package"
+
+      - name: Generate Swift API report
+        run: |
+          package="$(find "$RUNNER_TEMP/alias-sdk-swift" -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          scripts/alias-sdk/create-api-report.sh swift "$package" \
+            "$RUNNER_TEMP/alias-sdk-swift/API-REPORT.txt"
 
       - name: Record build environment
         run: |
@@ -220,10 +313,30 @@ jobs:
           key: alias-release-kotlin
 
       - name: Build host package
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/kotlin-target-first
         run: scripts/alias-sdk/build-kotlin-host.sh "$RUNNER_TEMP/alias-sdk-kotlin"
+
+      - name: Rebuild and verify normalized package bytes
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/kotlin-target-second
+        run: |
+          scripts/alias-sdk/build-kotlin-host.sh "$RUNNER_TEMP/alias-sdk-kotlin-rebuild"
+          scripts/alias-sdk/verify-reproducible.sh \
+            "$RUNNER_TEMP/alias-sdk-kotlin" \
+            "$RUNNER_TEMP/alias-sdk-kotlin-rebuild" \
+            >"$RUNNER_TEMP/alias-sdk-kotlin-reproducibility.txt"
+          mv "$RUNNER_TEMP/alias-sdk-kotlin-reproducibility.txt" \
+            "$RUNNER_TEMP/alias-sdk-kotlin/REPRODUCIBILITY.txt"
 
       - name: Test clean-room JVM consumer
         run: scripts/alias-sdk/test-consumer.sh kotlin "$RUNNER_TEMP/alias-sdk-kotlin"
+
+      - name: Generate Kotlin API report
+        run: |
+          package="$(find "$RUNNER_TEMP/alias-sdk-kotlin" -maxdepth 1 -name '*.jar' -print -quit)"
+          scripts/alias-sdk/create-api-report.sh kotlin "$package" \
+            "$RUNNER_TEMP/alias-sdk-kotlin/API-REPORT.txt"
 
       - name: Record build environment
         run: |
@@ -282,16 +395,24 @@ jobs:
 
       - name: Build native library
         env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/android-target-first
           TARGET: ${{ matrix.target }}
         run: cargo bin cross build --locked --package bitwarden-uniffi --release --target="$TARGET"
 
-      - name: Stage native library
+      - name: Stage native library and verify a clean rebuild
         env:
           ABI: ${{ matrix.abi }}
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p "$RUNNER_TEMP/android-native/$ABI"
-          cp "target/$TARGET/release/libbitwarden_uniffi.so" "$RUNNER_TEMP/android-native/$ABI/"
+          cp "$RUNNER_TEMP/android-target-first/$TARGET/release/libbitwarden_uniffi.so" \
+            "$RUNNER_TEMP/android-native/$ABI/"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/android-target-second" \
+            cargo bin cross build --locked --package bitwarden-uniffi --release --target="$TARGET"
+          scripts/alias-sdk/verify-reproducible.sh \
+            "$RUNNER_TEMP/android-native/$ABI/libbitwarden_uniffi.so" \
+            "$RUNNER_TEMP/android-target-second/$TARGET/release/libbitwarden_uniffi.so" \
+            >"$RUNNER_TEMP/android-native/$ABI/REPRODUCIBILITY.txt"
 
       - name: Upload native library
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -350,8 +471,10 @@ jobs:
       - name: Assemble AAR
         run: |
           jni="crates/bitwarden-uniffi/kotlin/sdk/src/main/jniLibs"
-          mkdir -p "$jni"
-          cp -R "$RUNNER_TEMP/android-native"/* "$jni/"
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            mkdir -p "$jni/$abi"
+            cp "$RUNNER_TEMP/android-native/$abi/libbitwarden_uniffi.so" "$jni/$abi/"
+          done
           (
             cd crates/bitwarden-uniffi/kotlin
             ./build-schemas.sh
@@ -359,22 +482,62 @@ jobs:
               ./gradlew --no-daemon :sdk:assembleRelease
           )
 
-      - name: Verify and test packaged AAR
-        run: |
-          aar="crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar"
-          scripts/check-oss-artifact-boundary.sh --kotlin "$aar"
-          scripts/alias-sdk/test-consumer.sh android "$aar"
-
-      - name: Stage Android artifact and environment
+      - name: Stage normalized Android artifact
         run: |
           release_version="$(scripts/alias-sdk/read-release-version.sh)"
           mkdir -p "$RUNNER_TEMP/alias-sdk-android"
           cp crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar \
             "$RUNNER_TEMP/alias-sdk-android/bitwarden-alias-sdk-android-${release_version}.aar"
+          scripts/alias-sdk/normalize-archive.sh zip \
+            "$RUNNER_TEMP/alias-sdk-android/bitwarden-alias-sdk-android-${release_version}.aar"
           git rev-parse HEAD >"$RUNNER_TEMP/alias-sdk-android/VERSION"
           printf '%s\n' "$release_version" >"$RUNNER_TEMP/alias-sdk-android/PACKAGE_VERSION"
           cp support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION \
             "$RUNNER_TEMP/alias-sdk-android/ALIAS_REFERENCE_SCHEMA_VERSION"
+          {
+            for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+              echo "abi=$abi"
+              sed 's/^/  /' "$RUNNER_TEMP/android-native/$abi/REPRODUCIBILITY.txt"
+            done
+          } >"$RUNNER_TEMP/alias-sdk-android/NATIVE-REPRODUCIBILITY.txt"
+
+      - name: Rebuild and verify normalized AAR bytes
+        run: |
+          release_version="$(scripts/alias-sdk/read-release-version.sh)"
+          (
+            cd crates/bitwarden-uniffi/kotlin
+            ../../../scripts/alias-sdk/retry-command.sh 3 20 \
+              ./gradlew --no-daemon :sdk:clean :sdk:assembleRelease
+          )
+          mkdir -p "$RUNNER_TEMP/alias-sdk-android-rebuild"
+          cp crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar \
+            "$RUNNER_TEMP/alias-sdk-android-rebuild/bitwarden-alias-sdk-android-${release_version}.aar"
+          scripts/alias-sdk/normalize-archive.sh zip \
+            "$RUNNER_TEMP/alias-sdk-android-rebuild/bitwarden-alias-sdk-android-${release_version}.aar"
+          cp "$RUNNER_TEMP/alias-sdk-android/VERSION" "$RUNNER_TEMP/alias-sdk-android-rebuild/"
+          cp "$RUNNER_TEMP/alias-sdk-android/PACKAGE_VERSION" "$RUNNER_TEMP/alias-sdk-android-rebuild/"
+          cp "$RUNNER_TEMP/alias-sdk-android/ALIAS_REFERENCE_SCHEMA_VERSION" \
+            "$RUNNER_TEMP/alias-sdk-android-rebuild/"
+          cp "$RUNNER_TEMP/alias-sdk-android/NATIVE-REPRODUCIBILITY.txt" \
+            "$RUNNER_TEMP/alias-sdk-android-rebuild/"
+          scripts/alias-sdk/verify-reproducible.sh \
+            "$RUNNER_TEMP/alias-sdk-android" \
+            "$RUNNER_TEMP/alias-sdk-android-rebuild" \
+            >"$RUNNER_TEMP/alias-sdk-android-reproducibility.txt"
+          mv "$RUNNER_TEMP/alias-sdk-android-reproducibility.txt" \
+            "$RUNNER_TEMP/alias-sdk-android/REPRODUCIBILITY.txt"
+
+      - name: Verify and test packaged AAR
+        run: |
+          aar="$(find "$RUNNER_TEMP/alias-sdk-android" -maxdepth 1 -name '*.aar' -print -quit)"
+          scripts/check-oss-artifact-boundary.sh --kotlin "$aar"
+          scripts/alias-sdk/test-consumer.sh android "$aar"
+
+      - name: Generate Android API report and environment
+        run: |
+          aar="$(find "$RUNNER_TEMP/alias-sdk-android" -maxdepth 1 -name '*.aar' -print -quit)"
+          scripts/alias-sdk/create-api-report.sh android "$aar" \
+            "$RUNNER_TEMP/alias-sdk-android/API-REPORT.txt"
           {
             echo "source_commit=$(git rev-parse HEAD)"
             echo "runner_image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
@@ -421,7 +584,12 @@ jobs:
   bundle:
     name: Assemble checksummed candidate
     runs-on: ubuntu-24.04
-    needs: [wasm, swift, kotlin, android, simplelogin]
+    needs: [assurance, wasm, swift, kotlin, android, simplelogin]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Checkout manifest inputs
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -433,11 +601,27 @@ jobs:
         with:
           node-version: "24.17.0"
 
+      - name: Install Rust for locked dependency metadata
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.96.0"
+
       - name: Download candidate artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: alias-sdk-*
           path: ${{ runner.temp }}/candidate/artifacts
+
+      - name: Create deterministic public dependency SBOM
+        run: |
+          cargo metadata --locked --format-version 1 >"$RUNNER_TEMP/cargo-metadata.json"
+          scripts/alias-sdk/create-cargo-package-list.sh "$RUNNER_TEMP/cargo-active.txt"
+          scripts/alias-sdk/create-sbom.mjs \
+            "$RUNNER_TEMP/candidate/artifacts" \
+            "$RUNNER_TEMP/cargo-metadata.json" \
+            "$RUNNER_TEMP/cargo-active.txt" \
+            "${{ github.workspace }}/package-lock.json" \
+            "$RUNNER_TEMP/candidate-sbom.json"
 
       - name: Create release manifest
         env:
@@ -446,9 +630,14 @@ jobs:
           CONFORMANCE_VECTORS_FILE: ${{ github.workspace }}/formal/alias-security/conformance-vectors.json
           ALIAS_REFERENCE_SCHEMA_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION
           INTEGRATION_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/INTEGRATION_BASE
+          IOS_INTEGRATION_FILE: ${{ github.workspace }}/support/alias-sdk-release/ios-integration.json
+          PREVIOUS_PUBLIC_ALIAS_HEAD_FILE: ${{ github.workspace }}/support/alias-sdk-release/PREVIOUS_PUBLIC_ALIAS_HEAD
           PROVIDER_PIN_FILE: ${{ github.workspace }}/support/simplelogin/SIMPLELOGIN_COMMIT
           RELEASE_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/VERSION
+          SBOM_FILE: ${{ runner.temp }}/candidate-sbom.json
           SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
+          KEYLESS_ATTESTATION_EXPECTED: ${{ github.event_name != 'pull_request' }}
           TYPESCRIPT_PACKAGE_FILE: ${{ github.workspace }}/crates/bitwarden-wasm-internal/npm/package.json
           UPSTREAM_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/UPSTREAM_BASE
         run: |
@@ -457,8 +646,24 @@ jobs:
             "$RUNNER_TEMP/candidate"
 
       - name: Verify handoff manifest checksums
-        working-directory: ${{ runner.temp }}/candidate/artifacts
-        run: sha256sum --check ../SHA256SUMS
+        working-directory: ${{ runner.temp }}/candidate
+        run: sha256sum --check SHA256SUMS
+
+      - name: Verify candidate evidence boundary
+        run: scripts/alias-sdk/check-candidate-evidence.sh "$RUNNER_TEMP/candidate"
+
+      - name: Create keyless candidate provenance
+        if: github.event_name != 'pull_request'
+        id: provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: ${{ runner.temp }}/candidate/**
+
+      - name: Include the signed provenance bundle
+        if: github.event_name != 'pull_request'
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$PROVENANCE_BUNDLE" "$RUNNER_TEMP/candidate/PROVENANCE.sigstore.json"
 
       - name: Upload release candidate
         id: candidate
@@ -473,6 +678,7 @@ jobs:
         env:
           ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
+          KEYLESS_ATTESTED: ${{ github.event_name != 'pull_request' }}
         run: |
           {
             echo "# Alias SDK release candidate"
@@ -482,7 +688,8 @@ jobs:
             echo "- Alias reference schema: \`1\`"
             echo "- Workflow artifact ID: \`$ARTIFACT_ID\`"
             echo "- Workflow artifact SHA-256: \`$ARTIFACT_DIGEST\`"
+            echo "- Keyless file attestations: \`$KEYLESS_ATTESTED\`"
             echo "- Registry publication: disabled"
             echo
-            echo "The candidate contains the machine-readable handoff manifest, per-file SHA-256 hashes, source pins, and required client integration steps."
+            echo "The candidate contains the handoff manifest, per-file SHA-256 hashes, API reports, reproducibility evidence, a CycloneDX SBOM, dependency audit evidence, source pins, and client integration steps."
           } >>"$GITHUB_STEP_SUMMARY"

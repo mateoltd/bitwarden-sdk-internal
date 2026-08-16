@@ -9,6 +9,9 @@ if (!artifactDirectory || !outputDirectory) {
   console.error("Usage: create-release-manifest.mjs ARTIFACT_DIRECTORY OUTPUT_DIRECTORY");
   process.exit(2);
 }
+if (path.resolve(artifactDirectory) !== path.join(path.resolve(outputDirectory), "artifacts")) {
+  throw new Error("ARTIFACT_DIRECTORY must be the artifacts child of OUTPUT_DIRECTORY");
+}
 
 const requireFullCommit = (value, label) => {
   if (!/^[0-9a-f]{40}$/.test(value ?? "")) {
@@ -34,6 +37,10 @@ const upstreamBase = requireFullCommit(
 const integrationBase = requireFullCommit(
   readTrimmed(requireFile("INTEGRATION_BASE_FILE")),
   "INTEGRATION_BASE_FILE",
+);
+const previousPublicAliasHead = requireFullCommit(
+  readTrimmed(requireFile("PREVIOUS_PUBLIC_ALIAS_HEAD_FILE")),
+  "PREVIOUS_PUBLIC_ALIAS_HEAD_FILE",
 );
 const providerCommit = requireFullCommit(
   readTrimmed(requireFile("PROVIDER_PIN_FILE")),
@@ -65,6 +72,7 @@ if (typescriptPackage.aliasReferenceSchemaVersion !== aliasReferenceSchemaVersio
 }
 
 const integration = readJson(requireFile("CLIENT_INTEGRATION_FILE"));
+const iosIntegration = readJson(requireFile("IOS_INTEGRATION_FILE"));
 const conformance = readJson(requireFile("CONFORMANCE_VECTORS_FILE"));
 if (
   integration.schemaVersion !== 1 ||
@@ -73,6 +81,16 @@ if (
   integration.requiredClientIntegrationSteps.length === 0
 ) {
   throw new Error("CLIENT_INTEGRATION_FILE has an unsupported or empty schema");
+}
+requireFullCommit(iosIntegration.commit, "IOS_INTEGRATION_FILE commit");
+requireFullCommit(iosIntegration.currentSdkSwift?.commit, "IOS_INTEGRATION_FILE SDK commit");
+if (
+  iosIntegration.branch !== "feat/first-class-aliases" ||
+  iosIntegration.requiredArtifact !== "swift" ||
+  iosIntegration.aliasReferenceSchemaVersion !== aliasReferenceSchemaVersion ||
+  iosIntegration.integrationStatus !== "requires-provider-neutral-repin"
+) {
+  throw new Error("IOS_INTEGRATION_FILE has an unsupported integration contract");
 }
 if (conformance.referenceSchema?.version !== integration.aliasReferenceSchemaVersion) {
   throw new Error("Release metadata and conformance vectors disagree on the alias schema");
@@ -91,33 +109,53 @@ if (files.length === 0) {
 const artifacts = files.map((file) => {
   const bytes = fs.readFileSync(file);
   return {
-    path: path.relative(artifactDirectory, file).split(path.sep).join("/"),
+    path: `artifacts/${path.relative(artifactDirectory, file).split(path.sep).join("/")}`,
     bytes: bytes.length,
     sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
   };
 });
 const artifactByPath = new Map(artifacts.map((artifact) => [artifact.path, artifact]));
 const assertPackageProvenance = (directory) => {
-  const sourcePath = `${directory}/VERSION`;
-  const versionPath = `${directory}/PACKAGE_VERSION`;
-  const schemaPath = `${directory}/ALIAS_REFERENCE_SCHEMA_VERSION`;
+  const sourcePath = `artifacts/${directory}/VERSION`;
+  const versionPath = `artifacts/${directory}/PACKAGE_VERSION`;
+  const schemaPath = `artifacts/${directory}/ALIAS_REFERENCE_SCHEMA_VERSION`;
+  const apiReportPath = `artifacts/${directory}/API-REPORT.txt`;
+  const reproducibilityPath = `artifacts/${directory}/REPRODUCIBILITY.txt`;
   if (
     !artifactByPath.has(sourcePath) ||
     !artifactByPath.has(versionPath) ||
-    !artifactByPath.has(schemaPath)
+    !artifactByPath.has(schemaPath) ||
+    !artifactByPath.has(apiReportPath) ||
+    !artifactByPath.has(reproducibilityPath)
   ) {
-    throw new Error(`${directory} is missing source, package, or schema provenance`);
+    throw new Error(
+      `${directory} is missing source, package, schema, API, or reproducibility evidence`,
+    );
   }
-  if (readTrimmed(path.join(artifactDirectory, sourcePath)) !== sourceCommit) {
+  if (
+    readTrimmed(path.join(artifactDirectory, sourcePath.slice("artifacts/".length))) !==
+    sourceCommit
+  ) {
     throw new Error(`${sourcePath} does not match SOURCE_COMMIT`);
   }
-  if (readTrimmed(path.join(artifactDirectory, versionPath)) !== releaseVersion) {
+  if (
+    readTrimmed(path.join(artifactDirectory, versionPath.slice("artifacts/".length))) !==
+    releaseVersion
+  ) {
     throw new Error(`${versionPath} does not match RELEASE_VERSION_FILE`);
   }
   if (
-    readTrimmed(path.join(artifactDirectory, schemaPath)) !== String(aliasReferenceSchemaVersion)
+    readTrimmed(path.join(artifactDirectory, schemaPath.slice("artifacts/".length))) !==
+    String(aliasReferenceSchemaVersion)
   ) {
     throw new Error(`${schemaPath} does not match ALIAS_REFERENCE_SCHEMA_VERSION_FILE`);
+  }
+  if (
+    !readTrimmed(
+      path.join(artifactDirectory, reproducibilityPath.slice("artifacts/".length)),
+    ).includes("reproducible=true")
+  ) {
+    throw new Error(`${reproducibilityPath} does not record an exact rebuild match`);
   }
 };
 
@@ -136,30 +174,31 @@ const packageDefinitions = [
     name: "@bitwarden/sdk-internal",
     format: "npm-tarball",
     matches: (artifactPath) =>
-      artifactPath.startsWith("alias-sdk-typescript/") && artifactPath.endsWith(".tgz"),
+      artifactPath.startsWith("artifacts/alias-sdk-typescript/") && artifactPath.endsWith(".tgz"),
   },
   {
     id: "swift",
     name: "BitwardenSdk",
     format: "swift-package-tarball",
     matches: (artifactPath) =>
-      artifactPath.startsWith("alias-sdk-swift/") && artifactPath.endsWith(".tar.gz"),
+      artifactPath.startsWith("artifacts/alias-sdk-swift/") && artifactPath.endsWith(".tar.gz"),
   },
   {
     id: "kotlinJvm",
     name: "bitwarden-alias-sdk-kotlin-host",
     format: "jar-with-host-native-library",
     matches: (artifactPath) =>
-      artifactPath.startsWith("alias-sdk-kotlin/") && artifactPath.endsWith(".jar"),
+      artifactPath.startsWith("artifacts/alias-sdk-kotlin/") && artifactPath.endsWith(".jar"),
     supportingMatches: (artifactPath) =>
-      artifactPath.startsWith("alias-sdk-kotlin/") && artifactPath.endsWith(".so"),
+      artifactPath.startsWith("artifacts/alias-sdk-kotlin/") &&
+      (artifactPath.endsWith(".so") || artifactPath.endsWith(".dylib")),
   },
   {
     id: "android",
     name: "com.bitwarden.sdk",
     format: "aar",
     matches: (artifactPath) =>
-      artifactPath.startsWith("alias-sdk-android/") && artifactPath.endsWith(".aar"),
+      artifactPath.startsWith("artifacts/alias-sdk-android/") && artifactPath.endsWith(".aar"),
   },
 ];
 const packages = Object.fromEntries(
@@ -192,32 +231,106 @@ const packages = Object.fromEntries(
   }),
 );
 
+const sbomFile = requireFile("SBOM_FILE");
+const sbom = readJson(sbomFile);
+if (sbom.bomFormat !== "CycloneDX" || sbom.specVersion !== "1.6") {
+  throw new Error("SBOM_FILE must be a CycloneDX 1.6 document");
+}
+const auditPath = "artifacts/alias-sdk-assurance/AUDIT-REPORT.json";
+const auditArtifact = artifactByPath.get(auditPath);
+if (!auditArtifact) throw new Error(`${auditPath} is missing`);
+const audit = readJson(path.join(artifactDirectory, "alias-sdk-assurance/AUDIT-REPORT.json"));
+if (
+  audit.cargo?.unacceptedVulnerabilityCount !== 0 ||
+  !Array.isArray(audit.cargo?.acceptedRisks) ||
+  audit.npm?.vulnerabilities?.total !== 0
+) {
+  throw new Error("Dependency audit evidence has unaccepted or malformed findings");
+}
+const sbomBytes = fs.readFileSync(sbomFile);
+const sbomArtifact = {
+  path: "SBOM.cdx.json",
+  bytes: sbomBytes.length,
+  sha256: crypto.createHash("sha256").update(sbomBytes).digest("hex"),
+};
+
+const sourceRepository =
+  process.env.SOURCE_REPOSITORY ?? "https://github.com/bitwarden/sdk-internal";
+const workflowRepository = process.env.GITHUB_REPOSITORY ?? "";
+const workflowRef = process.env.GITHUB_WORKFLOW_REF ?? "";
+const workflowRunId = process.env.GITHUB_RUN_ID ?? "";
+const workflowRunAttempt = process.env.GITHUB_RUN_ATTEMPT ?? "";
+const keylessAttestationExpected = process.env.KEYLESS_ATTESTATION_EXPECTED === "true";
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   aliasReferenceSchemaVersion,
   sourceCommit,
   releaseVersion,
+  releaseChannel: "unreleased-prerelease",
+  candidatePolicy: {
+    registriesPublished: false,
+    gitTagCreated: false,
+    githubReleaseCreated: false,
+  },
   integrationBase,
+  previousPublicAliasHead,
   upstreamBase,
   providerPin: {
-    provider: "SimpleLogin",
+    adapterId: "simplelogin",
     repository: "https://github.com/simple-login/app.git",
     commit: providerCommit,
   },
   clientsContract: readJson(requireFile("CLIENTS_CONTRACT_FILE")),
+  iosIntegrationContract: iosIntegration,
   packages,
+  evidence: {
+    sbom: sbomArtifact,
+    dependencyAudit: auditArtifact,
+    acceptedAuditRisks: audit.cargo.acceptedRisks,
+    apiReports: Object.fromEntries(
+      ["alias-sdk-typescript", "alias-sdk-swift", "alias-sdk-kotlin", "alias-sdk-android"].map(
+        (directory) => [directory, artifactByPath.get(`artifacts/${directory}/API-REPORT.txt`)],
+      ),
+    ),
+    reproducibility: Object.fromEntries(
+      ["alias-sdk-typescript", "alias-sdk-swift", "alias-sdk-kotlin", "alias-sdk-android"].map(
+        (directory) => [
+          directory,
+          artifactByPath.get(`artifacts/${directory}/REPRODUCIBILITY.txt`),
+        ],
+      ),
+    ),
+  },
+  provenance: {
+    sourceRepository,
+    builderId: workflowRepository
+      ? `https://github.com/${workflowRepository}/actions/runs/${workflowRunId}/attempts/${workflowRunAttempt}`
+      : "local-unsigned",
+    workflowRef,
+    eventName: process.env.GITHUB_EVENT_NAME ?? "local",
+    keylessAttestation: keylessAttestationExpected
+      ? {
+          issuer: "https://token.actions.githubusercontent.com",
+          strategy: "GitHub artifact attestation over every candidate file",
+          verification: `gh attestation verify --repo ${workflowRepository} <candidate-file>`,
+        }
+      : null,
+  },
   requiredClientIntegrationSteps: integration.requiredClientIntegrationSteps,
   artifacts,
 };
 
 fs.mkdirSync(outputDirectory, { recursive: true });
+fs.copyFileSync(sbomFile, path.join(outputDirectory, "SBOM.cdx.json"));
 fs.writeFileSync(
   path.join(outputDirectory, "handoff-manifest.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 fs.writeFileSync(
   path.join(outputDirectory, "SHA256SUMS"),
-  `${artifacts.map(({ sha256, path: artifactPath }) => `${sha256}  ${artifactPath}`).join("\n")}\n`,
+  `${[...artifacts, sbomArtifact]
+    .map(({ sha256, path: artifactPath }) => `${sha256}  ${artifactPath}`)
+    .join("\n")}\n`,
 );
 console.log(
   `Handoff manifest records ${Object.keys(packages).length} packages and ${artifacts.length} files from ${sourceCommit}`,

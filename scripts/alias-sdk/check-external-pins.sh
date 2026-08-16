@@ -18,6 +18,13 @@ git -C "$repository_root" cat-file -e "$integration_base^{commit}" 2>/dev/null \
 git -C "$repository_root" merge-base --is-ancestor "$integration_base" HEAD \
     || fail "INTEGRATION_BASE is not an ancestor of the candidate"
 
+previous_public_alias_head="$(tr -d '[:space:]' \
+    <"$repository_root/support/alias-sdk-release/PREVIOUS_PUBLIC_ALIAS_HEAD")"
+[[ "$previous_public_alias_head" == "4a08b5fe81c363169d36f582cc13c03b59d212d8" ]] \
+    || fail "PREVIOUS_PUBLIC_ALIAS_HEAD is not the reviewed unreleased public SDK head"
+git -C "$repository_root" merge-base --is-ancestor "$previous_public_alias_head" HEAD \
+    || fail "PREVIOUS_PUBLIC_ALIAS_HEAD is not an ancestor of the candidate"
+
 simplelogin_commit="$(tr -d '[:space:]' <"$repository_root/support/simplelogin/SIMPLELOGIN_COMMIT")"
 [[ "$simplelogin_commit" =~ ^[0-9a-f]{40}$ ]] \
     || fail "SIMPLELOGIN_COMMIT must be one full Git SHA"
@@ -53,11 +60,25 @@ clients_contract="$repository_root/support/alias-sdk-release/consumers/typescrip
 node -e '
   const fs = require("node:fs");
   const contract = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  if (!/^[0-9a-f]{40}$/.test(contract.commit)) process.exit(1);
-' "$clients_contract" || fail "the bitwarden/clients contract must record one full commit SHA"
+  if (contract.repository !== "https://github.com/mateoltd/bitwarden-clients.git") process.exit(1);
+  if (contract.branch !== "integration/public-alias-clients") process.exit(1);
+  if (contract.commit !== "4f6804e8c44b482bece57654afaa23980c71332a") process.exit(1);
+' "$clients_contract" || fail "the bitwarden/clients contract pin is not the reviewed public integration commit"
+
+ios_contract="$repository_root/support/alias-sdk-release/ios-integration.json"
+node -e '
+  const fs = require("node:fs");
+  const contract = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (contract.commit !== "736a85b5d3f2afbdb46b61b7698ebd0828e7481d") process.exit(1);
+  if (contract.currentSdkSwift?.commit !== "858d31ac18214e47c5264fc73da8c9885565bda0") process.exit(1);
+  if (contract.aliasReferenceSchemaVersion !== 1) process.exit(1);
+  if (contract.integrationStatus !== "requires-provider-neutral-repin") process.exit(1);
+' "$ios_contract" || fail "the iOS feature and current sdk-swift consumer pins are not reviewed"
 
 release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")" \
     || fail "the alias SDK release version is invalid"
+[[ "$release_version" == "0.3.0-alias-provider-neutral.1" ]] \
+    || fail "the unreleased provider-neutral v1 candidate version is not pinned"
 alias_reference_schema_version="$(tr -d '[:space:]' \
     <"$repository_root/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"
 [[ "$alias_reference_schema_version" == "1" ]] \
@@ -107,6 +128,34 @@ if grep -En 'uses:[[:space:]]+[^[:space:]#]+@(main|master|v[0-9]+([.]?[0-9]+)*)(
     "$repository_root/.github/workflows/alias-sdk-release.yml" \
     "$repository_root/.github/workflows/alias-sdk-upstream.yml"; then
     fail "alias SDK workflows contain a floating action reference"
+fi
+
+cargo_metadata_file="$(mktemp "${TMPDIR:-/tmp}/alias-cargo-metadata.XXXXXX")"
+trap 'rm -f "$cargo_metadata_file"' EXIT
+cargo metadata --locked --no-deps --format-version 1 \
+    --manifest-path "$repository_root/Cargo.toml" >"$cargo_metadata_file" \
+    || fail "Cargo workspace metadata could not be evaluated"
+node -e '
+  const fs = require("node:fs");
+  const metadata = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const packages = new Map(metadata.packages.map((pkg) => [pkg.id, pkg]));
+  const defaults = metadata.workspace_default_members.map((id) => packages.get(id));
+  if (defaults.length === 0 || defaults.some((pkg) => !pkg)) process.exit(1);
+  if (defaults.some((pkg) => pkg.manifest_path.includes("/bitwarden_license/"))) process.exit(1);
+' "$cargo_metadata_file" || fail "the default Cargo workspace includes commercial or PAM crates"
+default_cargo_graph="$(cargo tree --locked \
+    --manifest-path "$repository_root/Cargo.toml" \
+    --edges normal,build \
+    --prefix none \
+    --format '{p}')" \
+    || fail "the default Cargo dependency graph could not be evaluated"
+if grep -Eq '^bitwarden-(commercial-vault|pam|sm) v' <<<"$default_cargo_graph"; then
+    fail "the default Cargo dependency graph activates commercial or PAM code"
+fi
+
+if grep -En '(npm publish|cargo publish|git tag|gh release create)' \
+    "$repository_root/.github/workflows/alias-sdk-release.yml"; then
+    fail "the candidate workflow contains a publication, tag, or release command"
 fi
 
 echo "Alias SDK external sources are pinned"
