@@ -1,4 +1,4 @@
-cargo run -p uniffi-bindgen generate \
+cargo run --locked -p uniffi-bindgen generate \
   ./sdk/src/main/jniLibs/arm64-v8a/libbitwarden_uniffi.so \
   --language kotlin \
   --no-format \

@@ -31,7 +31,6 @@ pub mod vault;
 #[cfg(target_os = "android")]
 mod android_support;
 
-use alias::AliasClient;
 use crypto::CryptoClient;
 use error::{Error, Result};
 pub use log_callback::LogCallback;
@@ -105,16 +104,6 @@ impl Client {
     /// Generator operations
     pub fn generators(&self) -> GeneratorClients {
         GeneratorClients(self.0.generator())
-    }
-
-    /// Creates a SimpleLogin alias lifecycle client.
-    pub fn aliases(
-        &self,
-        settings: bitwarden_alias::AliasClientSettings,
-    ) -> std::result::Result<AliasClient, bitwarden_alias::AliasError> {
-        use bitwarden_alias::AliasClientExt as _;
-
-        self.0.0.aliases(settings).map(AliasClient::from)
     }
 
     /// Exporters

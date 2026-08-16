@@ -12,6 +12,9 @@ TARGET_DIRECTORY="${CARGO_TARGET_DIR:-$SDK_REPO_ROOT/target}"
 # Cleanup dirs
 rm -rf BitwardenFFI.xcframework
 rm -rf tmp
+# Generated component names can change when a crate gains an explicit UniFFI configuration.
+# Remove only generated Swift files so stale component modules cannot survive regeneration.
+find ./Sources/BitwardenSdk -maxdepth 1 -type f -name '*.swift' -delete
 
 # Build native library
 export IPHONEOS_DEPLOYMENT_TARGET="13.0"
