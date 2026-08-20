@@ -11,9 +11,9 @@ canonical wire-schema version stamped into every package. The current candidate 
 `0.3.0-alias-provider-neutral.1`, schema v1. It corrects the unreleased v1 shape directly; no
 migration, legacy decoder, dual schema, or deprecated provider-specific form belongs in an artifact.
 `PREVIOUS_PUBLIC_ALIAS_HEAD` records the exact unreleased public SDK head whose v1 contract this
-candidate replaces directly.
-`ios-integration.json` records the exact iOS feature consumer and its pre-candidate sdk-swift pin;
-the handoff manifest marks it as requiring the provider-neutral Swift artifact repin.
+candidate replaces directly. `ios-integration.json` records the exact iOS feature consumer and its
+pre-candidate sdk-swift pin; the handoff manifest marks it as requiring the provider-neutral Swift
+artifact repin.
 
 ## Locked release decisions
 
@@ -22,9 +22,9 @@ the handoff manifest marks it as requiring the provider-neutral Swift artifact r
   metadata, not identity.
 - Adapter identifiers and negotiated capabilities are extensible validated values. SimpleLogin is a
   concrete adapter and appears only in adapter implementation tests and its source pin.
-- Credentials, endpoints, provider-native payloads, provider error bodies, and provider-specific
-  IDs are forbidden from references, vault bindings, journals, generated common definitions,
-  telemetry, logs, API reports, and release metadata.
+- Credentials, endpoints, provider-native payloads, provider error bodies, and provider-specific IDs
+  are forbidden from references, vault bindings, journals, generated common definitions, telemetry,
+  logs, API reports, and release metadata.
 - Generated username requests are now pure and local. The credential-bearing `Forwarded` service
   union, including its SimpleLogin-only form, is removed; remote alias creation goes through an
   explicitly injected provider-neutral `AliasClient`.
@@ -110,6 +110,6 @@ git fetch https://github.com/bitwarden/sdk-internal.git <reported-sha>
 scripts/alias-sdk/check-upstream-merge.sh FETCH_HEAD
 ```
 
-After deliberately rebasing or merging the patch stack, replace `UPSTREAM_BASE` with the reviewed
-canonical SDK commit. When the client compiler contract changes, update
+After deliberately rebasing the patch stack, replace `UPSTREAM_BASE` with the reviewed canonical SDK
+commit. When the client compiler contract changes, update
 `consumers/typescript/bitwarden-clients-contract.json`, its package lock, and the fixture together.

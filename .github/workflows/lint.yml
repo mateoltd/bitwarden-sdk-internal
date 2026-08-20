@@ -3,7 +3,7 @@ name: Lint
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "integration/provider-neutral-alias-upstream-sync"]
   pull_request:
 
 permissions: {}
