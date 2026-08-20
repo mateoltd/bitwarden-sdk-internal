@@ -10,5 +10,8 @@ crates/bitwarden-uniffi/swift/*
 # Test fixtures
 crates/bitwarden-exporters/resources/*
 
+# Byte-identical reviewed third-party source
+support/vendor/**
+
 # CI output
 clippy_result.sarif
