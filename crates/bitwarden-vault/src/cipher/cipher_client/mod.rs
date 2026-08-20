@@ -106,13 +106,19 @@ impl CiphersClient {
             .ok_or(EncryptError::MissingUserId)?;
         let key_store = self.client.internal.get_key_store();
 
+        let wrapping_key = cipher_view.key_identifier();
+
         // TODO: Once this flag is removed, the key generation logic should
         // be moved directly into the KeyEncryptable implementation
         if cipher_view.key.is_none() && self.client.flags().get().await.enable_cipher_key_encryption
         {
-            let key = cipher_view.key_identifier();
-            cipher_view.generate_cipher_key(&mut key_store.context(), key)?;
+            cipher_view.generate_cipher_key(&mut key_store.context(), wrapping_key)?;
         }
+
+        let encrypted_by_key_id = key_store
+            .context()
+            .get_symmetric_key_id(wrapping_key)
+            .map(|id| id.to_string());
 
         let mode = if self.should_use_blob_encryption_for_view(&cipher_view) {
             EncryptMode::Blob(cipher_view)
@@ -123,6 +129,7 @@ impl CiphersClient {
         Ok(EncryptionContext {
             cipher,
             encrypted_for: user_id,
+            encrypted_by_key_id,
         })
     }
 
@@ -174,9 +181,16 @@ impl CiphersClient {
         };
         let cipher = mode.encrypt_composite(&mut ctx, new_key_id)?;
 
+        // Rotation encrypts under the new key, so that - not the view's natural slot - is what the
+        // server needs to validate this write against.
+        let encrypted_by_key_id = ctx
+            .get_symmetric_key_id(new_key_id)
+            .map(|id| id.to_string());
+
         Ok(EncryptionContext {
             cipher,
             encrypted_for: user_id,
+            encrypted_by_key_id,
         })
     }
 
@@ -199,29 +213,38 @@ impl CiphersClient {
 
         let mut ctx = key_store.context();
 
-        let prepared_modes: Vec<EncryptMode<CipherView>> = cipher_views
+        // Each cipher may be wrapped under a different key (organization vs. user), so the key id
+        // is captured per cipher and zipped back up after the batch encrypt.
+        let prepared: Vec<(EncryptMode<CipherView>, Option<String>)> = cipher_views
             .into_iter()
             .map(|mut cv| {
+                let wrapping_key = cv.key_identifier();
                 if cv.key.is_none() && enable_cipher_key {
-                    let key = cv.key_identifier();
-                    cv.generate_cipher_key(&mut ctx, key)?;
+                    cv.generate_cipher_key(&mut ctx, wrapping_key)?;
                 }
+                let encrypted_by_key_id = ctx
+                    .get_symmetric_key_id(wrapping_key)
+                    .map(|id| id.to_string());
                 let mode = if self.should_use_blob_encryption_for_view(&cv) {
                     EncryptMode::Blob(cv)
                 } else {
                     EncryptMode::Legacy(cv)
                 };
-                Ok(mode)
+                Ok((mode, encrypted_by_key_id))
             })
             .collect::<Result<Vec<_>, bitwarden_crypto::CryptoError>>()?;
+
+        let (prepared_modes, key_ids): (Vec<_>, Vec<_>) = prepared.into_iter().unzip();
 
         let ciphers: Vec<Cipher> = key_store.encrypt_list(&prepared_modes)?;
 
         Ok(ciphers
             .into_iter()
-            .map(|cipher| EncryptionContext {
+            .zip(key_ids)
+            .map(|(cipher, encrypted_by_key_id)| EncryptionContext {
                 cipher,
                 encrypted_for: user_id,
+                encrypted_by_key_id,
             })
             .collect())
     }
@@ -371,7 +394,10 @@ impl CiphersClient {
 #[cfg(test)]
 mod tests {
 
-    use bitwarden_core::client::test_accounts::test_bitwarden_com_account;
+    use bitwarden_core::{
+        client::test_accounts::{test_bitwarden_com_account, test_bitwarden_com_account_v2},
+        key_management::SymmetricKeySlotId,
+    };
     #[cfg(feature = "wasm")]
     use bitwarden_crypto::{CryptoError, SymmetricKeyAlgorithm};
 
@@ -606,6 +632,59 @@ mod tests {
         assert!(res.is_err());
     }
 
+    /// End-to-end check that an alias-bound write uses opaque blob storage while also capturing
+    /// the wrapping key's id. The V2 test account holds an XAES-256-GCM user key with a key id.
+    #[tokio::test]
+    async fn test_encrypt_alias_blob_captures_encrypted_by_key_id() {
+        let client = Client::init_test_account(test_bitwarden_com_account_v2()).await;
+        let alias_reference = r#"{"version":1,"connectionId":"11111111-1111-4111-8111-111111111111","aliasId":"opaque/id:7","address":"alias@example.test"}"#;
+
+        let expected = client
+            .internal
+            .get_key_store()
+            .context()
+            .get_symmetric_key_id(SymmetricKeySlotId::User)
+            .expect("the V2 account's user key has a key id")
+            .to_string();
+
+        let mut view = test_cipher_view();
+        view.login.as_mut().expect("login view").alias_reference = Some(alias_reference.to_owned());
+
+        let encrypted = client.vault().ciphers().encrypt(view).await.unwrap();
+
+        assert!(encrypted.cipher.is_blob_encrypted());
+        assert_eq!(
+            encrypted.encrypted_by_key_id.as_deref(),
+            Some(expected.as_str())
+        );
+
+        let decrypted = client
+            .vault()
+            .ciphers()
+            .decrypt(encrypted.cipher)
+            .await
+            .unwrap();
+        assert_eq!(
+            decrypted.login.and_then(|login| login.alias_reference),
+            Some(alias_reference.to_owned())
+        );
+    }
+
+    /// The V1 test account's AES-CBC-HMAC user key has no key id, so the field stays absent.
+    #[tokio::test]
+    async fn test_encrypt_omits_encrypted_by_key_id_on_v1_account() {
+        let client = Client::init_test_account(test_bitwarden_com_account()).await;
+
+        let encrypted = client
+            .vault()
+            .ciphers()
+            .encrypt(test_cipher_view())
+            .await
+            .unwrap();
+
+        assert_eq!(encrypted.encrypted_by_key_id, None);
+    }
+
     #[tokio::test]
     async fn test_encrypt_cipher_with_legacy_attachment_without_key() {
         let client = Client::init_test_account(test_bitwarden_com_account()).await;
@@ -627,6 +706,7 @@ mod tests {
         let EncryptionContext {
             cipher: new_cipher,
             encrypted_for: _,
+            encrypted_by_key_id: _,
         } = client.vault().ciphers().encrypt(view).await.unwrap();
         assert!(new_cipher.key.is_some());
 
@@ -674,6 +754,7 @@ mod tests {
         let EncryptionContext {
             cipher: new_cipher,
             encrypted_for: _,
+            encrypted_by_key_id: _,
         } = client.vault().ciphers().encrypt(view).await.unwrap();
         assert!(new_cipher.key.is_some());
 
@@ -722,6 +803,7 @@ mod tests {
         let EncryptionContext {
             cipher: new_cipher,
             encrypted_for: _,
+            encrypted_by_key_id: _,
         } = client.vault().ciphers().encrypt(new_view).await.unwrap();
 
         let attachment = new_cipher

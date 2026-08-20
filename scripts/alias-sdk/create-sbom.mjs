@@ -6,7 +6,13 @@ import process from "node:process";
 
 const [artifactDirectory, cargoMetadataFile, cargoActiveFile, packageLockFile, outputFile] =
   process.argv.slice(2);
-if (!artifactDirectory || !cargoMetadataFile || !cargoActiveFile || !packageLockFile || !outputFile) {
+if (
+  !artifactDirectory ||
+  !cargoMetadataFile ||
+  !cargoActiveFile ||
+  !packageLockFile ||
+  !outputFile
+) {
   console.error(
     "Usage: create-sbom.mjs ARTIFACT_DIRECTORY CARGO_METADATA_JSON CARGO_ACTIVE_PACKAGES " +
       "PACKAGE_LOCK_JSON OUTPUT_JSON",
@@ -43,10 +49,13 @@ const forbiddenFound = [...selectedCargoIds]
   .map((id) => packagesById.get(id)?.name)
   .filter((name) => forbiddenCargoPackages.includes(name));
 if (forbiddenFound.length > 0) {
-  throw new Error(`Commercial packages entered the public SBOM graph: ${forbiddenFound.join(", ")}`);
+  throw new Error(
+    `Commercial packages entered the public SBOM graph: ${forbiddenFound.join(", ")}`,
+  );
 }
 
-const cargoRef = (pkg) => `pkg:cargo/${encodeURIComponent(pkg.name)}@${encodeURIComponent(pkg.version)}`;
+const cargoRef = (pkg) =>
+  `pkg:cargo/${encodeURIComponent(pkg.name)}@${encodeURIComponent(pkg.version)}`;
 const cargoComponents = [...selectedCargoIds]
   .map((id) => packagesById.get(id))
   .filter(Boolean)

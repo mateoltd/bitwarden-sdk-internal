@@ -577,6 +577,7 @@ mod tests {
         EncryptionContext {
             cipher,
             encrypted_for: user_id,
+            encrypted_by_key_id: None,
         }
     }
 

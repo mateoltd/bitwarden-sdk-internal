@@ -125,7 +125,14 @@
   ],
   "adapterVectors": {
     "acceptedIds": ["simplelogin", "example.alias-v2", "org.example-alias"],
-    "rejectedIds": ["SimpleLogin", "simple login", "org.example_alias", "https://provider.test", "-leading", "trailing-"],
+    "rejectedIds": [
+      "SimpleLogin",
+      "simple login",
+      "org.example_alias",
+      "https://provider.test",
+      "-leading",
+      "trailing-"
+    ],
     "commonContractMustNotContain": ["SimpleLogin", "AddyIo", "Fastmail", "DuckDuckGo"]
   },
   "capabilityVectors": {
@@ -415,7 +422,7 @@
       "aliasId": "opaque-disabled",
       "desiredEnabled": false,
       "initialEnabled": false,
-      "steps": [{"kind": "get", "remoteEnabledAfter": false}],
+      "steps": [{ "kind": "get", "remoteEnabledAfter": false }],
       "expectedEnabled": false,
       "expectedMutationCount": 0
     },
@@ -425,11 +432,11 @@
       "desiredEnabled": false,
       "initialEnabled": true,
       "steps": [
-        {"kind": "get", "remoteEnabledAfter": true},
-        {"kind": "toggle", "remoteEnabledAfter": true, "responseEnabled": false},
-        {"kind": "get", "remoteEnabledAfter": true},
-        {"kind": "toggle", "remoteEnabledAfter": false, "responseEnabled": true},
-        {"kind": "get", "remoteEnabledAfter": false}
+        { "kind": "get", "remoteEnabledAfter": true },
+        { "kind": "toggle", "remoteEnabledAfter": true, "responseEnabled": false },
+        { "kind": "get", "remoteEnabledAfter": true },
+        { "kind": "toggle", "remoteEnabledAfter": false, "responseEnabled": true },
+        { "kind": "get", "remoteEnabledAfter": false }
       ],
       "expectedEnabled": false,
       "expectedMutationCount": 2

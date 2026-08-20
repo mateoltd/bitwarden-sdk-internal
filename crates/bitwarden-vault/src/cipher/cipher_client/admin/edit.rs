@@ -77,8 +77,12 @@ async fn edit_cipher(
         view.generate_cipher_key(&mut key_store.context(), key)?;
     }
 
-    // Organization ciphers normally follow the staged blob rollout. An alias reference overrides
-    // that selection because it has no legacy wire field and must remain in opaque encrypted data.
+    // Admin organization ciphers follow the staged blob rollout unless an alias reference forces
+    // opaque encrypted data. Preserve the exact wrapping-key identity for server-side validation.
+    let encrypted_by_key_id = key_store
+        .context()
+        .get_symmetric_key_id(view.key_identifier())
+        .map(|id| id.to_string());
     let mode = if use_blob {
         EncryptMode::Blob(view)
     } else {
@@ -87,6 +91,7 @@ async fn edit_cipher(
     let cipher: Cipher = key_store.encrypt(mode)?;
     let mut cipher_request: CipherRequestModel = cipher.try_into()?;
     cipher_request.encrypted_for = Some(encrypted_for.into());
+    cipher_request.encrypted_by_key_id = encrypted_by_key_id;
 
     let orig_mode = if use_blob {
         EncryptMode::Blob(original_cipher_view)
@@ -294,6 +299,7 @@ mod tests {
                         password_history: body.password_history,
                         attachments: None,
                         data: None,
+                        partial_data: None,
                     })
                 })
                 .once();

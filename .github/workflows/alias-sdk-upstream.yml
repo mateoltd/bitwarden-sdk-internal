@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "integration/public-alias-sdk"
+      - "integration/provider-neutral-alias-upstream-sync"
   workflow_dispatch:
     inputs:
       sdk-upstream-ref:
@@ -48,7 +49,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.96.0"
+          toolchain: "1.97.1"
 
       - name: Install Java for TLA+
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -210,7 +211,7 @@ jobs:
             echo "| Gate | Outcome | Action on failure |"
             echo "| --- | --- | --- |"
             echo "| Drift classification | $CLASSIFY_OUTCOME | Review classifier syntax and fetched ancestry. |"
-            echo "| SDK merge tree | $MERGE_OUTCOME | Rebase or resolve conflicts locally; this workflow never merges. |"
+            echo "| SDK merge tree | $MERGE_OUTCOME | Merge upstream and resolve conflicts locally; this workflow never merges. |"
             echo "| External pins | $PINS_OUTCOME | Pin the named source by full SHA, digest, version, or checksum. |"
             echo "| Secret scan | $SECRETS_OUTCOME | Rotate a real secret, then remove it from reachable history. |"
             echo "| Formal/Rust/UniFFI compatibility and security | $CONTRACTS_OUTCOME | Reproduce against the exact SDK SHA above and fix the patch stack. |"

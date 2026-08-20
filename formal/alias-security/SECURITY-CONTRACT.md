@@ -6,10 +6,11 @@ SHOULD, and MAY are requirements on the SDK and its adapters, not claims about a
 ## Assets and trust boundaries
 
 Protected assets are connection credentials and endpoint configuration, provider-account identity,
-provider alias state, encrypted operation journals, alias-to-vault bindings, and vault data unrelated
-to aliases. Adapter responses, decrypted vault inputs, concurrent clients, delayed responses, and
-replayed responses are untrusted. Vault encryption and persistence, TLS server authentication, and
-the remote provider's authorization decision are explicit assumptions described below.
+provider alias state, encrypted operation journals, alias-to-vault bindings, and vault data
+unrelated to aliases. Adapter responses, decrypted vault inputs, concurrent clients, delayed
+responses, and replayed responses are untrusted. Vault encryption and persistence, TLS server
+authentication, and the remote provider's authorization decision are explicit assumptions described
+below.
 
 ## Normative requirements
 
@@ -60,21 +61,22 @@ the remote provider's authorization decision are explicit assumptions described 
   bounded, causally identified, and uniquely identified. They contain only common operation and
   state facts. Merge validates scope and event identity, then is deterministic, commutative,
   associative, and idempotent. Reduction is pure and total for every validated journal.
-- **JOURNAL-2 Tombstones and conflicts.** A delete tombstone dominates every earlier lifecycle
-  event and prevents resurrection after stale-device merge. Concurrent incompatible observations
-  remain explicitly conflicted until a causally later resolution. Duplicate events are harmless;
-  colliding event IDs with different content fail closed.
+- **JOURNAL-2 Tombstones and conflicts.** A delete tombstone dominates every earlier lifecycle event
+  and prevents resurrection after stale-device merge. Concurrent incompatible observations remain
+  explicitly conflicted until a causally later resolution. Duplicate events are harmless; colliding
+  event IDs with different content fail closed.
 - **JOURNAL-3 Monotonic operation facts.** Causally later facts for one operation MUST NOT regress
   to an earlier phase. Acknowledged and failed facts are terminal; a previously unknown outcome may
   be resolved only to acknowledged or failed. Contradictory terminal facts fail closed.
 - **LIFE-1 Desired-state semantics.** Enable and disable are desired-state operations, not exposed
-  toggles. An adapter that only offers toggle may dispatch it only after a read observes the opposite
-  state. Every toggle is followed by a fresh validated read; its response body alone cannot establish
-  success. Bounded interference ends with an explicit conflict rather than false success.
-- **LIFE-2 Delete and unknown outcomes.** Delete removes only the remote alias and treats a validated
-  not-found response as idempotent success. A failure after any non-idempotent dispatch records and
-  returns `outcome-unknown`; it MUST NOT automatically replay. Reconciliation uses a separately
-  validated read or listing to resolve that event. Delete and disable remain distinct transitions.
+  toggles. An adapter that only offers toggle may dispatch it only after a read observes the
+  opposite state. Every toggle is followed by a fresh validated read; its response body alone cannot
+  establish success. Bounded interference ends with an explicit conflict rather than false success.
+- **LIFE-2 Delete and unknown outcomes.** Delete removes only the remote alias and treats a
+  validated not-found response as idempotent success. A failure after any non-idempotent dispatch
+  records and returns `outcome-unknown`; it MUST NOT automatically replay. Reconciliation uses a
+  separately validated read or listing to resolve that event. Delete and disable remain distinct
+  transitions.
 - **REPLAY-1 Response handling.** Delayed, duplicated, or replayed mutation bodies are observational
   only. A successful lifecycle result denotes a fresh validated observation, not a promise that a
   different authorized actor cannot mutate the provider immediately afterward.
@@ -110,17 +112,17 @@ when validated reads and responses are delivered and external interference event
    transactions, key management, and zeroization are outside this model.
 5. Validated remote alias IDs remain stable within one connection. The provider is not Byzantine
    beyond invalid shapes, conflicts, loss, delay, replay, and ambiguous outcomes represented here.
-6. TLA+ checks finite data-independent abstractions. Bounds, Unicode/email normalization, URL policy,
-   serialization byte limits, cryptography, and total implementation refinement are production-test
-   obligations, not theorem-prover claims.
+6. TLA+ checks finite data-independent abstractions. Bounds, Unicode/email normalization, URL
+   policy, serialization byte limits, cryptography, and total implementation refinement are
+   production-test obligations, not theorem-prover claims.
 
 ## External requirements mapping
 
-- [OWASP ASVS 5.0.0](https://github.com/OWASP/ASVS/releases/tag/v5.0.0_release):
-  `v5.0.0-8.1.1`, `8.2.2`, `8.3.1`, `13.3.2`, `14.2.6`, and `16.2.5` map to scoped
-  authorization, minimum sensitive data, trusted-layer enforcement, and credential-safe logging.
-- [NIST SP 800-53 Rev. 5](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final): AC-3, AC-4,
-  AC-6, AU-9, and SI-10 map to scoped enforcement, protected journals, least privilege, and input
+- [OWASP ASVS 5.0.0](https://github.com/OWASP/ASVS/releases/tag/v5.0.0_release): `v5.0.0-8.1.1`,
+  `8.2.2`, `8.3.1`, `13.3.2`, `14.2.6`, and `16.2.5` map to scoped authorization, minimum sensitive
+  data, trusted-layer enforcement, and credential-safe logging.
+- [NIST SP 800-53 Rev. 5](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final): AC-3, AC-4, AC-6,
+  AU-9, and SI-10 map to scoped enforcement, protected journals, least privilege, and input
   validation.
 - [RFC 9110 section 9.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods)
   informs the replay rules. The SDK never infers that a failed non-idempotent request was unapplied.
