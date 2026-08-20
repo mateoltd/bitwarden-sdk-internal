@@ -227,5 +227,5 @@ opt-level = 3
 [patch.crates-io]
 # arrayref 0.3.5-0.3.9 were yanked during the malicious 0.3.10/0.3.11 incident,
 # making blake2b_simd's ^0.3.5 requirement impossible to resolve from crates.io.
-# Pin the last pre-incident 0.3.9 source commit until a safe registry release is available.
-arrayref = { git = "https://github.com/droundy/arrayref", rev = "f8d0299d863922db6c409d08098941e833b70d69" }
+# Use the reviewed pre-incident 0.3.9 source until a safe registry release is available.
+arrayref = { path = "support/vendor/arrayref" }
