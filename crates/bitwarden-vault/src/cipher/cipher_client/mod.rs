@@ -3,11 +3,11 @@ use std::sync::Arc;
 use bitwarden_core::{
     Client, FromClient, OrganizationId,
     client::{ApiConfigurations, FromClientPart},
-    key_management::{BLOB_SECURITY_VERSION, KeySlotIds},
+    key_management::{BLOB_SECURITY_VERSION, KeySlotIds, SymmetricKeySlotId},
 };
 #[cfg(feature = "wasm")]
 use bitwarden_crypto::{CompositeEncryptable, SymmetricCryptoKey};
-use bitwarden_crypto::{IdentifyKey, KeyStore, KeyStoreContext};
+use bitwarden_crypto::{IdentifyKey, KeyStore, KeyStoreContext, SymmetricKeyAlgorithm};
 #[cfg(feature = "wasm")]
 use bitwarden_encoding::B64;
 use bitwarden_state::repository::{Repository, RepositoryError};
@@ -59,6 +59,23 @@ pub(crate) fn should_use_blob_encryption_for_view(
         .as_ref()
         .is_some_and(|login| login.alias_reference.is_some())
         || should_use_blob_encryption(ctx, view.organization_id)
+}
+
+/// Returns the wrapping-key identity understood by the server's cipher-write protocol.
+///
+/// Authenticated V1 keys have a deterministic identity for local reconciliation, but that derived
+/// value is not encoded in their legacy key material and is not a server-managed key id. All
+/// cipher write paths use this helper so a local V1 identity cannot cross the server boundary.
+pub(crate) fn server_key_id_for_wrapping_key(
+    ctx: &KeyStoreContext<KeySlotIds>,
+    wrapping_key: SymmetricKeySlotId,
+) -> Option<String> {
+    match ctx.get_symmetric_key_algorithm(wrapping_key) {
+        Ok(SymmetricKeyAlgorithm::Aes256CbcHmac) | Err(_) => None,
+        Ok(_) => ctx
+            .get_symmetric_key_id(wrapping_key)
+            .map(|id| id.to_string()),
+    }
 }
 
 #[allow(missing_docs)]
@@ -115,10 +132,8 @@ impl CiphersClient {
             cipher_view.generate_cipher_key(&mut key_store.context(), wrapping_key)?;
         }
 
-        let encrypted_by_key_id = key_store
-            .context()
-            .get_symmetric_key_id(wrapping_key)
-            .map(|id| id.to_string());
+        let encrypted_by_key_id =
+            server_key_id_for_wrapping_key(&key_store.context(), wrapping_key);
 
         let mode = if self.should_use_blob_encryption_for_view(&cipher_view) {
             EncryptMode::Blob(cipher_view)
@@ -183,9 +198,7 @@ impl CiphersClient {
 
         // Rotation encrypts under the new key, so that - not the view's natural slot - is what the
         // server needs to validate this write against.
-        let encrypted_by_key_id = ctx
-            .get_symmetric_key_id(new_key_id)
-            .map(|id| id.to_string());
+        let encrypted_by_key_id = server_key_id_for_wrapping_key(&ctx, new_key_id);
 
         Ok(EncryptionContext {
             cipher,
@@ -222,9 +235,7 @@ impl CiphersClient {
                 if cv.key.is_none() && enable_cipher_key {
                     cv.generate_cipher_key(&mut ctx, wrapping_key)?;
                 }
-                let encrypted_by_key_id = ctx
-                    .get_symmetric_key_id(wrapping_key)
-                    .map(|id| id.to_string());
+                let encrypted_by_key_id = server_key_id_for_wrapping_key(&ctx, wrapping_key);
                 let mode = if self.should_use_blob_encryption_for_view(&cv) {
                     EncryptMode::Blob(cv)
                 } else {
@@ -451,7 +462,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "wasm")]
     fn test_cipher_view() -> CipherView {
         let test_id = "fd411a1a-fec8-4070-985d-0e6560860e69".parse().unwrap();
         CipherView {
@@ -670,7 +680,8 @@ mod tests {
         );
     }
 
-    /// The V1 test account's AES-CBC-HMAC user key has no key id, so the field stays absent.
+    /// The V1 account's derived local identity is not a server-managed key id, so the field stays
+    /// absent.
     #[tokio::test]
     async fn test_encrypt_omits_encrypted_by_key_id_on_v1_account() {
         let client = Client::init_test_account(test_bitwarden_com_account()).await;

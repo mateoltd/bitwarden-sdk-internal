@@ -86,7 +86,7 @@ describe("user key id backfill", () => {
     );
 
     it(
-      "is false for a V1 account, whose user key carries no key id",
+      "is false for a V1 account, whose local key identity is not server-backfillable",
       async () => {
         mock = installHttpMock({});
         const client = await makeInitializedPasswordmanagerClient(bridge, SETTINGS);
@@ -156,7 +156,7 @@ describe("user key id backfill", () => {
     );
 
     it(
-      "fails for a V1 account, whose user key carries no key id",
+      "fails for a V1 account, whose local key identity is not server-backfillable",
       async () => {
         mock = installHttpMock({});
         const client = await makeInitializedPasswordmanagerClient(bridge, SETTINGS);

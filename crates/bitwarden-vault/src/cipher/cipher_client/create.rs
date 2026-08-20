@@ -15,7 +15,7 @@ use tsify::Tsify;
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
-use super::CiphersClient;
+use super::{CiphersClient, server_key_id_for_wrapping_key};
 use crate::{
     Cipher, CipherRepromptType, CipherView, FieldView, FolderId, VaultParseError,
     cipher::cipher::{EncryptMode, PartialCipher, StrictDecrypt},
@@ -114,10 +114,8 @@ async fn create_cipher<R: Repository<Cipher> + ?Sized>(
     use_blob: bool,
 ) -> Result<CipherView, CreateCipherError> {
     let collection_ids = view.collection_ids.clone();
-    let encrypted_by_key_id = key_store
-        .context()
-        .get_symmetric_key_id(view.key_identifier())
-        .map(|id| id.to_string());
+    let encrypted_by_key_id =
+        server_key_id_for_wrapping_key(&key_store.context(), view.key_identifier());
     let mode = if use_blob {
         EncryptMode::Blob(view)
     } else {

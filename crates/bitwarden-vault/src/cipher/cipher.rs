@@ -36,6 +36,8 @@ use super::{
     login::LoginListView,
     passport, secure_note, ssh_key,
 };
+#[cfg(test)]
+use crate::cipher_client::server_key_id_for_wrapping_key;
 use crate::{
     AttachmentView, DecryptError, EncryptError, Fido2CredentialFullView, Fido2CredentialView,
     FieldView, FolderId, Login, LoginView, VaultParseError,
@@ -125,8 +127,8 @@ pub struct EncryptionContext {
     /// Organization-owned ciphers, otherwise the user key - captured at the time the cipher was
     /// encrypted. The server uses it to reject writes made under a wrong key.
     ///
-    /// `None` for keys that carry no key id, which is the case for the legacy AES-CBC-HMAC keys
-    /// still used by V1 accounts.
+    /// `None` when the wrapping key has no server-managed id. Legacy AES-CBC-HMAC keys used by V1
+    /// accounts have a derived local identity, but that value does not cross this boundary.
     #[serde(default)]
     #[cfg_attr(feature = "uniffi", uniffi(default = None))]
     #[cfg_attr(feature = "wasm", tsify(optional))]
@@ -2426,10 +2428,7 @@ mod tests {
         let view = generate_cipher();
         assert_eq!(view.key_identifier(), SymmetricKeySlotId::User);
 
-        let actual = key_store
-            .context()
-            .get_symmetric_key_id(view.key_identifier())
-            .map(|id| id.to_string());
+        let actual = server_key_id_for_wrapping_key(&key_store.context(), view.key_identifier());
 
         assert_eq!(actual.as_deref(), Some(expected.as_str()));
         // The server only accepts a lowercase hex encoding of the 16 raw bytes.
@@ -2454,10 +2453,7 @@ mod tests {
         view.organization_id = Some(org);
         assert_eq!(view.key_identifier(), SymmetricKeySlotId::Organization(org));
 
-        let actual = key_store
-            .context()
-            .get_symmetric_key_id(view.key_identifier())
-            .map(|id| id.to_string());
+        let actual = server_key_id_for_wrapping_key(&key_store.context(), view.key_identifier());
 
         assert_eq!(actual.as_deref(), Some(org_key_id.as_str()));
     }
@@ -2475,15 +2471,13 @@ mod tests {
             .unwrap();
         assert!(view.key.is_some());
 
-        let actual = key_store
-            .context()
-            .get_symmetric_key_id(view.key_identifier())
-            .map(|id| id.to_string());
+        let actual = server_key_id_for_wrapping_key(&key_store.context(), view.key_identifier());
 
         assert_eq!(actual.as_deref(), Some(expected.as_str()));
     }
 
-    /// V1 accounts use AES-CBC-HMAC keys, which carry no key id, so the field is omitted entirely.
+    /// V1 accounts have a derived local identity, but the server does not manage that value, so the
+    /// field is omitted entirely.
     #[test]
     fn test_encrypted_by_key_id_is_none_for_legacy_user_key() {
         let key_store = create_test_crypto_with_user_key(SymmetricCryptoKey::make(
@@ -2491,10 +2485,14 @@ mod tests {
         ));
 
         let view = generate_cipher();
-        let actual = key_store
-            .context()
-            .get_symmetric_key_id(view.key_identifier())
-            .map(|id| id.to_string());
+        assert!(
+            key_store
+                .context()
+                .get_symmetric_key_id(view.key_identifier())
+                .is_some(),
+            "the V1 key retains its derived local identity"
+        );
+        let actual = server_key_id_for_wrapping_key(&key_store.context(), view.key_identifier());
 
         assert_eq!(actual, None);
     }

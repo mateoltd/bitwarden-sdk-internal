@@ -15,7 +15,8 @@ use crate::{
         cipher_client::create::convert_request_to_cipher_view,
     },
     cipher_client::{
-        admin::CipherAdminClient, create::CipherCreateRequest, should_use_blob_encryption_for_view,
+        admin::CipherAdminClient, create::CipherCreateRequest, server_key_id_for_wrapping_key,
+        should_use_blob_encryption_for_view,
     },
 };
 
@@ -51,11 +52,9 @@ async fn create_cipher(
     let favorite = view.favorite;
 
     // Admin organization ciphers follow the staged blob rollout unless an alias reference forces
-    // opaque encrypted data. Preserve the exact wrapping-key identity for server-side validation.
-    let encrypted_by_key_id = key_store
-        .context()
-        .get_symmetric_key_id(view.key_identifier())
-        .map(|id| id.to_string());
+    // opaque encrypted data. Preserve the server-managed wrapping-key identity for validation.
+    let encrypted_by_key_id =
+        server_key_id_for_wrapping_key(&key_store.context(), view.key_identifier());
     let mode = if use_blob {
         EncryptMode::Blob(view)
     } else {
