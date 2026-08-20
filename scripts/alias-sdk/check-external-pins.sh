@@ -130,6 +130,43 @@ if grep -En 'uses:[[:space:]]+[^[:space:]#]+@(main|master|v[0-9]+([.]?[0-9]+)*)(
     fail "alias SDK workflows contain a floating action reference"
 fi
 
+grep -Fqx 'arrayref = { path = "support/vendor/arrayref" }' "$repository_root/Cargo.toml" \
+    || fail "arrayref must resolve from the reviewed vendored source"
+node - "$repository_root/support/vendor/arrayref" <<'NODE' \
+    || fail "vendored arrayref source does not match reviewed provenance"
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const root = process.argv[2];
+const expected = new Map([
+  ["Cargo.toml", "122da2bce2d1aea793e4dc4d38a98966c67f3339a4db2f8fc740bd74ce97e668"],
+  ["LICENSE", "1bc7e6f475b3ec99b7e2643411950ae2368c250dd4c5c325f80f9811362a94a1"],
+  ["PROVENANCE.md", "367c62030c4d35b8fd160c41b83c16bf3488c664bf4d912238c1899a621d912d"],
+  ["README.md", "039b4028d39ba4ec049041dbbf949555bcc42aa7bced920725c5573d2b6cad24"],
+  ["src/lib.rs", "b74872c9bb2b836132817e024a3f9205f83a6864de1a9bfb46acc1bfbbc1873a"],
+]);
+const actual = [];
+const visit = (directory, prefix = "") => {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) visit(path.join(directory, entry.name), relative);
+    else if (entry.isFile()) actual.push(relative);
+    else process.exit(1);
+  }
+};
+visit(root);
+actual.sort();
+if (JSON.stringify(actual) !== JSON.stringify([...expected.keys()])) process.exit(1);
+for (const [relative, digest] of expected) {
+  const actualDigest = crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(path.join(root, relative)))
+    .digest("hex");
+  if (actualDigest !== digest) process.exit(1);
+}
+NODE
+
 cargo_metadata_file="$(mktemp "${TMPDIR:-/tmp}/alias-cargo-metadata.XXXXXX")"
 trap 'rm -f "$cargo_metadata_file"' EXIT
 cargo metadata --locked --no-deps --format-version 1 \

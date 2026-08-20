@@ -12,5 +12,8 @@ crates/bitwarden-exporters/resources/*
 crates/bitwarden-importers/src/importers/onepassword/access/fixtures/*
 !crates/bitwarden-importers/src/importers/onepassword/access/fixtures/scripts
 
+# Byte-identical reviewed third-party source
+support/vendor/**
+
 # CI output
 clippy_result.sarif
