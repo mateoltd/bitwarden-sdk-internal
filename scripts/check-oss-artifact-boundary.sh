@@ -39,12 +39,22 @@ check_release_provenance() {
 
 check_dependency_graph() {
     local package="$1"
+    local target="${2:-}"
     local tree
 
-    tree="$(
-        cd "$REPOSITORY_ROOT"
-        cargo tree --locked --package "$package" --edges normal,build --prefix none --format '{p}'
-    )"
+    if [[ -n "$target" ]]; then
+        tree="$(
+            cd "$REPOSITORY_ROOT"
+            cargo tree --locked --package "$package" --target "$target" \
+                --edges normal,build --prefix none --format '{p}'
+        )"
+    else
+        tree="$(
+            cd "$REPOSITORY_ROOT"
+            cargo tree --locked --package "$package" \
+                --edges normal,build --prefix none --format '{p}'
+        )"
+    fi
 
     if grep -E "$FORBIDDEN_PACKAGES" <<<"$tree"; then
         fail "$package resolves a commercial-only crate"
@@ -69,17 +79,31 @@ check_licensed_dependency_graph() {
 
 check_provider_neutral_alias_boundary() {
     local package="$1"
+    local target="${2:-}"
     local features
     local tree
 
-    features="$(
-        cd "$REPOSITORY_ROOT"
-        cargo tree --locked --package "$package" --edges features
-    )"
-    tree="$(
-        cd "$REPOSITORY_ROOT"
-        cargo tree --locked --package "$package" --edges normal,build --prefix none --format '{p}'
-    )"
+    if [[ -n "$target" ]]; then
+        features="$(
+            cd "$REPOSITORY_ROOT"
+            cargo tree --locked --package "$package" --target "$target" --edges features
+        )"
+        tree="$(
+            cd "$REPOSITORY_ROOT"
+            cargo tree --locked --package "$package" --target "$target" \
+                --edges normal,build --prefix none --format '{p}'
+        )"
+    else
+        features="$(
+            cd "$REPOSITORY_ROOT"
+            cargo tree --locked --package "$package" --edges features
+        )"
+        tree="$(
+            cd "$REPOSITORY_ROOT"
+            cargo tree --locked --package "$package" \
+                --edges normal,build --prefix none --format '{p}'
+        )"
+    fi
     grep -Eq '^bitwarden-alias v' <<<"$tree" \
         || fail "$package does not contain the provider-neutral alias contract"
     if grep -Fq 'bitwarden-generators feature "alias"' <<<"$features"; then
@@ -278,9 +302,9 @@ check_kotlin_host() {
     trap - RETURN
 }
 
-check_dependency_graph bitwarden-wasm-internal
+check_dependency_graph bitwarden-wasm-internal wasm32-unknown-unknown
 check_dependency_graph bitwarden-uniffi
-check_provider_neutral_alias_boundary bitwarden-wasm-internal
+check_provider_neutral_alias_boundary bitwarden-wasm-internal wasm32-unknown-unknown
 check_provider_neutral_alias_boundary bitwarden-uniffi
 check_licensed_dependency_graph
 
