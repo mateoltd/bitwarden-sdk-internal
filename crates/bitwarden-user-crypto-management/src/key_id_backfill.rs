@@ -23,7 +23,7 @@ pub enum KeyIdBackfillError {
     /// The user key is not in the key store, so the client is locked or not initialized.
     #[error("User key is not available in key store")]
     UserKeyNotAvailable,
-    /// The current user key carries no key id
+    /// The current user key has no server-backfillable key id.
     #[error("The current user key has no key id to backfill")]
     NoKeyId,
     /// The key id the server knows is read from client-managed state, which needs a bridge.
@@ -54,8 +54,7 @@ impl UserCryptoManagementClient {
         match self.current_user_key_id()? {
             Some(_) => Ok(true),
             None => {
-                // Todo: Remove when V1 keys support key ids
-                info!("User key carries no key id, nothing to backfill");
+                info!("User key has no server-backfillable key id");
                 Ok(false)
             }
         }
@@ -101,13 +100,24 @@ impl UserCryptoManagementClient {
 }
 
 impl UserCryptoManagementClient {
-    /// Reads the key id of the user key currently in the key store.
+    /// Reads the server-backfillable id of the user key currently in the key store.
+    ///
+    /// V1 keys have a deterministic local identity, but the server backfill protocol applies only
+    /// to V2 key material. Treating a derived V1 identity as a server key id would incorrectly
+    /// enroll legacy accounts in the V2 backfill flow.
     fn current_user_key_id(&self) -> Result<Option<KeyId>, KeyIdBackfillError> {
         let key_store = self.client.internal.get_key_store();
         let ctx = key_store.context();
 
         if !ctx.has_symmetric_key(SymmetricKeySlotId::User) {
             return Err(KeyIdBackfillError::UserKeyNotAvailable);
+        }
+
+        if ctx
+            .is_v1_symmetric_key(SymmetricKeySlotId::User)
+            .map_err(|_| KeyIdBackfillError::UserKeyNotAvailable)?
+        {
+            return Ok(None);
         }
 
         Ok(ctx.get_symmetric_key_id(SymmetricKeySlotId::User))
@@ -162,7 +172,7 @@ mod tests {
             .get_key_store()
             .context()
             .get_symmetric_key_id(SymmetricKeySlotId::User)
-            .expect("a V2 user key has a key id")
+            .expect("the user key has a local identity")
     }
 
     #[tokio::test]
@@ -195,8 +205,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_backfill_for_a_v1_user_key() {
-        // A V1 key carries no key id, so there is nothing to record.
         let client = client_with_user_key(SymmetricKeyAlgorithm::Aes256CbcHmac, no_api_calls());
+
+        // V1 identity is intentionally available for local encrypted-connection reconciliation,
+        // but it is not part of the server's V2 key-id backfill protocol.
+        let _derived_local_identity = user_key_id(&client);
 
         assert!(
             !client
