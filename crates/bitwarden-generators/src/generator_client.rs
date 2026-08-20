@@ -103,6 +103,10 @@ impl GeneratorClient {
     ///     Ok(())
     /// }
     /// ```
+    #[allow(
+        clippy::unused_async,
+        reason = "preserve the async SDK ABI after network forwarding moved to the alias lifecycle"
+    )]
     pub async fn username(&self, input: UsernameGeneratorRequest) -> Result<String, UsernameError> {
         username(input)
     }
