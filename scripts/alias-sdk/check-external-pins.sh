@@ -18,12 +18,43 @@ git -C "$repository_root" cat-file -e "$integration_base^{commit}" 2>/dev/null \
 git -C "$repository_root" merge-base --is-ancestor "$integration_base" HEAD \
     || fail "INTEGRATION_BASE is not an ancestor of the candidate"
 
+upstream_base="$(tr -d '[:space:]' \
+    <"$repository_root/support/alias-sdk-release/UPSTREAM_BASE")"
+[[ "$upstream_base" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "UPSTREAM_BASE must be one full Git SHA"
+git -C "$repository_root" cat-file -e "$upstream_base^{commit}" 2>/dev/null \
+    || fail "UPSTREAM_BASE is not present in repository history"
+git -C "$repository_root" merge-base --is-ancestor "$upstream_base" HEAD \
+    || fail "UPSTREAM_BASE is not an ancestor of the candidate"
+
 previous_public_alias_head="$(tr -d '[:space:]' \
     <"$repository_root/support/alias-sdk-release/PREVIOUS_PUBLIC_ALIAS_HEAD")"
 [[ "$previous_public_alias_head" == "4a08b5fe81c363169d36f582cc13c03b59d212d8" ]] \
     || fail "PREVIOUS_PUBLIC_ALIAS_HEAD is not the reviewed unreleased public SDK head"
-git -C "$repository_root" merge-base --is-ancestor "$previous_public_alias_head" HEAD \
-    || fail "PREVIOUS_PUBLIC_ALIAS_HEAD is not an ancestor of the candidate"
+git -C "$repository_root" cat-file -e "$previous_public_alias_head^{commit}" 2>/dev/null \
+    || fail "PREVIOUS_PUBLIC_ALIAS_HEAD is not present in repository history"
+
+if ! git -C "$repository_root" merge-base --is-ancestor "$previous_public_alias_head" HEAD; then
+    candidate_patch_ids="$(
+        while IFS= read -r commit; do
+            git -C "$repository_root" show --pretty=format: --patch "$commit" \
+                | git patch-id --stable \
+                | awk '{print $1}'
+        done < <(git -C "$repository_root" rev-list --reverse "$upstream_base..HEAD")
+    )"
+    while IFS= read -r commit; do
+        patch_id="$(
+            git -C "$repository_root" show --pretty=format: --patch "$commit" \
+                | git patch-id --stable \
+                | awk '{print $1}'
+        )"
+        grep -Fqx "$patch_id" <<<"$candidate_patch_ids" \
+            || fail "rebased candidate does not preserve historical patch $commit"
+    done < <(
+        git -C "$repository_root" rev-list --reverse \
+            "$integration_base..$previous_public_alias_head"
+    )
+fi
 
 simplelogin_commit="$(tr -d '[:space:]' <"$repository_root/support/simplelogin/SIMPLELOGIN_COMMIT")"
 [[ "$simplelogin_commit" =~ ^[0-9a-f]{40}$ ]] \
