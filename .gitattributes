@@ -1,0 +1,3 @@
+# Formal model digests are byte-exact and must survive Windows checkout unchanged.
+formal/alias-security/*.cfg text eol=lf
+formal/alias-security/*.tla text eol=lf
