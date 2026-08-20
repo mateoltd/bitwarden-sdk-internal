@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - "main"
+      - "integration/provider-neutral-alias-upstream-sync"
   pull_request:
 
 env:

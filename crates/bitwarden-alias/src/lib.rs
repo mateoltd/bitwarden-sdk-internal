@@ -17,8 +17,7 @@ mod uniffi_bridge;
 #[cfg(test)]
 mod tests;
 
-pub use error::MAX_RETRY_AFTER_SECONDS;
-pub use error::{AliasError, AliasErrorCode};
+pub use error::{AliasError, AliasErrorCode, MAX_RETRY_AFTER_SECONDS};
 pub use journal::{
     ALIAS_JOURNAL_VERSION, AliasCausalEntry, AliasJournal, AliasJournalEvent, AliasJournalState,
     AliasOperationPhase, AliasReducedOperation, AliasReducedResource, MAX_CAUSAL_ENTRIES,

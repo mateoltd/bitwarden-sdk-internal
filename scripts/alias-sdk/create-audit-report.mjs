@@ -17,7 +17,11 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const cargo = readJson(cargoAuditFile);
 const npm = readJson(npmAuditFile);
 const policy = readJson(policyFile);
-if (policy.schemaVersion !== 1 || !Array.isArray(policy.exceptions) || policy.exceptions.length !== 1) {
+if (
+  policy.schemaVersion !== 1 ||
+  !Array.isArray(policy.exceptions) ||
+  policy.exceptions.length !== 1
+) {
   throw new Error("Audit policy schema is unsupported");
 }
 const activeCargoPackages = new Set(
@@ -64,7 +68,9 @@ for (const finding of activeVulnerabilities) {
   }
   for (const requiredField of ["dependencyPath", "riskOwner", "rationale", "limitation"]) {
     if (typeof exception[requiredField] !== "string" || exception[requiredField].length < 20) {
-      throw new Error(`Audit exception ${exception.advisoryId} has no substantive ${requiredField}`);
+      throw new Error(
+        `Audit exception ${exception.advisoryId} has no substantive ${requiredField}`,
+      );
     }
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(exception.reviewedOn) || exception.reviewedOn > today) {
@@ -74,14 +80,14 @@ for (const finding of activeVulnerabilities) {
 }
 for (const exception of policy.exceptions) {
   if (!acceptedRisks.includes(exception)) {
-    throw new Error(`Audit exception ${exception.advisoryId} is expired, stale, or not an active finding`);
+    throw new Error(
+      `Audit exception ${exception.advisoryId} is expired, stale, or not an active finding`,
+    );
   }
 }
 const activeWarnings = Object.values(cargo.warnings ?? {})
   .flat()
-  .filter((entry) =>
-    activeCargoPackages.has(`${entry.package?.name}@${entry.package?.version}`),
-  )
+  .filter((entry) => activeCargoPackages.has(`${entry.package?.name}@${entry.package?.version}`))
   .map((entry) => ({
     kind: entry.kind,
     advisoryId: entry.advisory?.id,

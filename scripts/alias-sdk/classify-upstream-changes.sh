@@ -16,7 +16,7 @@ mkdir -p "$(dirname "$report_path")"
 all_changes="$(git -C "$repository_root" diff --name-only "$base_sha..$upstream_sha")"
 relevant_changes="$(
     grep -E \
-        '^(Cargo\.(toml|lock)|rust-toolchain\.toml|scripts/|\.github/workflows/(build-(android|swift|wasm-internal)|rust-test|lint)\.yml|crates/bitwarden-(alias|api-base|core|generators|pm|sensitive-value|uniffi|vault|wasm-internal)/)' \
+        '^(Cargo\.(toml|lock)|rust-toolchain\.toml|scripts/|bitwarden_license/|crates/|\.github/workflows/(build-(android|swift|wasm-internal)|rust-test|lint|update-api-bindings)\.yml)' \
         <<<"$all_changes" || true
 )"
 
