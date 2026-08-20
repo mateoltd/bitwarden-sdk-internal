@@ -224,3 +224,8 @@ opt-level = 3
 # Stripping the binary reduces the size by ~30%, but the stacktraces won't be usable anymore.
 # This is fine as long as we don't have any unhandled panics, but let's keep it disabled for now
 # strip = true
+[patch.crates-io]
+# arrayref 0.3.5-0.3.9 were yanked during the malicious 0.3.10/0.3.11 incident,
+# making blake2b_simd's ^0.3.5 requirement impossible to resolve from crates.io.
+# Pin the last pre-incident 0.3.9 source commit until a safe registry release is available.
+arrayref = { git = "https://github.com/droundy/arrayref", rev = "f8d0299d863922db6c409d08098941e833b70d69" }
