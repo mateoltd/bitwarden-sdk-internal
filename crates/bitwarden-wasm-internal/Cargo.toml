@@ -32,7 +32,6 @@ performance-tracing = []
 
 [dependencies]
 async-trait = { workspace = true }
-bitwarden-alias = { workspace = true, features = ["wasm"] }
 bitwarden-commercial-vault = { workspace = true, optional = true, features = [
     "wasm",
 ] }
@@ -52,7 +51,6 @@ bitwarden-pm = { workspace = true, features = ["wasm"] }
 bitwarden-policies = { workspace = true, features = ["wasm"] }
 bitwarden-random = { workspace = true, features = ["wasm"] }
 bitwarden-send = { workspace = true, features = ["wasm"] }
-bitwarden-sensitive-value = { workspace = true, features = ["wasm"] }
 bitwarden-server-communication-config = { workspace = true, features = ["wasm"] }
 bitwarden-shared-unlock = { workspace = true, features = ["wasm"] }
 bitwarden-ssh = { workspace = true, features = ["wasm"] }
@@ -73,6 +71,10 @@ tsify = { workspace = true }
 uuid = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bitwarden-alias = { workspace = true, features = ["wasm"] }
+bitwarden-sensitive-value = { workspace = true, features = ["wasm"] }
 
 [lints]
 workspace = true
