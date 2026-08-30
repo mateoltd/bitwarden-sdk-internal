@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly TLA_VERSION="1.8.0"
-readonly TLA_SHA256="ab323b79802aedc3203b3f9af37c6aca3ed43f4e0225b36f2aa77b26de46c05f"
+readonly TLA_SHA256="eabd140a70f49eb9305a3bd3f3df944eddf87e5a90d329789085f8953a80533a"
 readonly FORMAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly TOOL_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/bitwarden-alias-tla-${TLA_VERSION}"
 readonly TLA_JAR="${TOOL_DIR}/tla2tools.jar"

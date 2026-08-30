@@ -35,25 +35,102 @@ git -C "$repository_root" cat-file -e "$previous_public_alias_head^{commit}" 2>/
     || fail "PREVIOUS_PUBLIC_ALIAS_HEAD is not present in repository history"
 
 if ! git -C "$repository_root" merge-base --is-ancestor "$previous_public_alias_head" HEAD; then
-    candidate_patch_ids="$(
-        while IFS= read -r commit; do
-            git -C "$repository_root" show --pretty=format: --patch "$commit" \
-                | git patch-id --stable \
-                | awk '{print $1}'
-        done < <(git -C "$repository_root" rev-list --reverse "$upstream_base..HEAD")
-    )"
-    while IFS= read -r commit; do
-        patch_id="$(
-            git -C "$repository_root" show --pretty=format: --patch "$commit" \
+    patch_map="$repository_root/support/alias-sdk-release/HISTORICAL_PATCH_MAP.json"
+    [[ -f "$patch_map" ]] || fail "historical rebase patch map is missing"
+    map_rows="$(node - "$patch_map" "$previous_public_alias_head" "$upstream_base" <<'NODE'
+const fs = require("node:fs");
+const [file, historicalHead, rebasedBase] = process.argv.slice(2);
+const map = JSON.parse(fs.readFileSync(file, "utf8"));
+const commitPattern = /^[0-9a-f]{40}$/;
+if (
+  map.schemaVersion !== 1 ||
+  map.historicalHead !== historicalHead ||
+  map.rebasedBase !== rebasedBase ||
+  !Array.isArray(map.mappings) ||
+  map.mappings.length !== 6
+) {
+  process.exit(1);
+}
+for (const entry of map.mappings) {
+  const values = [
+    entry.historicalCommit,
+    entry.rebasedCommit,
+    entry.historicalPatchId,
+    entry.rebasedPatchId,
+  ];
+  if (values.some((value) => !commitPattern.test(value ?? ""))) process.exit(1);
+  if (!new Set(["exact", "semantic"]).has(entry.equivalence)) process.exit(1);
+  if (entry.equivalence === "exact") {
+    if (entry.historicalPatchId !== entry.rebasedPatchId || entry.rationale !== "") process.exit(1);
+  } else if (
+    entry.historicalPatchId === entry.rebasedPatchId ||
+    typeof entry.rationale !== "string" ||
+    entry.rationale.length < 40 ||
+    /[\t\r\n]/.test(entry.rationale)
+  ) {
+    process.exit(1);
+  }
+  process.stdout.write(
+    [
+      entry.historicalCommit,
+      entry.rebasedCommit,
+      entry.historicalPatchId,
+      entry.rebasedPatchId,
+      entry.equivalence,
+      entry.rationale,
+    ].join("\t") + "\n",
+  );
+}
+NODE
+    )" || fail "historical rebase patch map is malformed"
+
+    historical_commits="$(git -C "$repository_root" rev-list --reverse \
+        "$integration_base..$previous_public_alias_head")"
+    mapping_count=0
+    previous_rebased=""
+    while IFS=$'\t' read -r historical_commit rebased_commit historical_patch rebased_patch \
+        equivalence rationale; do
+        mapping_count=$((mapping_count + 1))
+        expected_historical="$(sed -n "${mapping_count}p" <<<"$historical_commits")"
+        [[ "$historical_commit" == "$expected_historical" ]] \
+            || fail "historical patch map is not complete and ordered"
+        git -C "$repository_root" merge-base --is-ancestor "$upstream_base" "$rebased_commit" \
+            || fail "mapped commit $rebased_commit is not downstream of UPSTREAM_BASE"
+        git -C "$repository_root" merge-base --is-ancestor "$rebased_commit" HEAD \
+            || fail "mapped commit $rebased_commit is not an ancestor of the candidate"
+        if [[ -n "$previous_rebased" ]]; then
+            git -C "$repository_root" merge-base --is-ancestor \
+                "$previous_rebased" "$rebased_commit" \
+                || fail "rebased patch map is not ordered"
+        fi
+        [[ "$(git -C "$repository_root" show -s --format=%s "$historical_commit")" == \
+            "$(git -C "$repository_root" show -s --format=%s "$rebased_commit")" ]] \
+            || fail "mapped commit subjects differ for $historical_commit"
+        actual_historical_patch="$(
+            git -C "$repository_root" show --pretty=format: --patch "$historical_commit" \
                 | git patch-id --stable \
                 | awk '{print $1}'
         )"
-        grep -Fqx "$patch_id" <<<"$candidate_patch_ids" \
-            || fail "rebased candidate does not preserve historical patch $commit"
-    done < <(
-        git -C "$repository_root" rev-list --reverse \
-            "$integration_base..$previous_public_alias_head"
-    )
+        actual_rebased_patch="$(
+            git -C "$repository_root" show --pretty=format: --patch "$rebased_commit" \
+                | git patch-id --stable \
+                | awk '{print $1}'
+        )"
+        [[ "$actual_historical_patch" == "$historical_patch" ]] \
+            || fail "historical patch id drifted for $historical_commit"
+        [[ "$actual_rebased_patch" == "$rebased_patch" ]] \
+            || fail "rebased patch id drifted for $rebased_commit"
+        if [[ "$equivalence" == "exact" ]]; then
+            [[ "$historical_patch" == "$rebased_patch" ]] \
+                || fail "exact patch mapping differs for $historical_commit"
+        else
+            [[ -n "$rationale" ]] \
+                || fail "semantic patch mapping lacks rationale for $historical_commit"
+        fi
+        previous_rebased="$rebased_commit"
+    done <<<"$map_rows"
+    [[ "$mapping_count" -eq "$(grep -c . <<<"$historical_commits")" ]] \
+        || fail "historical patch map does not cover the complete public history"
 fi
 
 simplelogin_commit="$(tr -d '[:space:]' <"$repository_root/support/simplelogin/SIMPLELOGIN_COMMIT")"
@@ -108,7 +185,7 @@ node -e '
 
 release_version="$("$repository_root/scripts/alias-sdk/read-release-version.sh")" \
     || fail "the alias SDK release version is invalid"
-[[ "$release_version" == "0.3.0-alias-provider-neutral.1" ]] \
+[[ "$release_version" == "0.3.0-alias-provider-neutral.2" ]] \
     || fail "the unreleased provider-neutral v1 candidate version is not pinned"
 alias_reference_schema_version="$(tr -d '[:space:]' \
     <"$repository_root/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION")"

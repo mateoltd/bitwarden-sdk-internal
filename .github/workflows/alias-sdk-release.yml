@@ -666,7 +666,7 @@ jobs:
           SBOM_FILE: ${{ runner.temp }}/candidate-sbom.json
           SOURCE_COMMIT: ${{ github.sha }}
           SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
-          KEYLESS_ATTESTATION_EXPECTED: ${{ github.event_name != 'pull_request' }}
+          KEYLESS_ATTESTATION_EXPECTED: false
           TYPESCRIPT_PACKAGE_FILE: ${{ github.workspace }}/crates/bitwarden-wasm-internal/npm/package.json
           UPSTREAM_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/UPSTREAM_BASE
         run: |
@@ -707,7 +707,7 @@ jobs:
         env:
           ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
-          KEYLESS_ATTESTED: ${{ github.event_name != 'pull_request' }}
+          KEYLESS_ATTESTED: false
         run: |
           {
             echo "# Alias SDK release candidate"
