@@ -1,7 +1,8 @@
+use std::fmt;
+
 use bitwarden_crypto::EFF_LONG_WORD_LIST;
 use bitwarden_error::bitwarden_error;
 use rand::{Rng, RngExt, distr::Distribution, seq::IndexedRandom};
-use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -14,19 +15,11 @@ use crate::util::capitalize_first_letter;
 #[bitwarden_error(flat)]
 #[derive(Debug, Error)]
 pub enum UsernameError {
-    #[error("Invalid API Key")]
-    InvalidApiKey,
-    #[error("Unknown error")]
-    Unknown,
-
-    #[error("Received error message from server: [{}] {}", .status, .message)]
-    ResponseContent { status: StatusCode, message: String },
-
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
+    #[error("username generation failed")]
+    GenerationFailed,
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
@@ -37,46 +30,20 @@ pub enum AppendType {
     WebsiteName { website: String },
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
-#[cfg_attr(
-    feature = "wasm",
-    derive(tsify::Tsify),
-    tsify(into_wasm_abi, from_wasm_abi)
-)]
-/// Configures the email forwarding service to use.
-/// For instructions on how to configure each service, see the documentation:
-/// <https://bitwarden.com/help/generator/#username-types>
-#[allow(missing_docs)]
-pub enum ForwarderServiceType {
-    /// Previously known as "AnonAddy"
-    AddyIo {
-        api_token: String,
-        domain: String,
-        base_url: String,
-    },
-    DuckDuckGo {
-        token: String,
-    },
-    Firefox {
-        api_token: String,
-    },
-    Fastmail {
-        api_token: String,
-    },
-    ForwardEmail {
-        api_token: String,
-        domain: String,
-    },
-    SimpleLogin {
-        api_key: String,
-        base_url: String,
-    },
+impl fmt::Debug for AppendType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Random => formatter.write_str("Random"),
+            Self::WebsiteName { .. } => formatter
+                .debug_struct("WebsiteName")
+                .field("website", &"[REDACTED]")
+                .finish(),
+        }
+    }
 }
 
 #[allow(missing_docs)]
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[cfg_attr(
@@ -107,55 +74,38 @@ pub enum UsernameGeneratorRequest {
         /// The domain to use for the catchall email address
         domain: String,
     },
-    Forwarded {
-        /// The email forwarding service to use, see [ForwarderServiceType]
-        /// for instructions on how to configure each
-        service: ForwarderServiceType,
-        /// The website for which the email address is being generated
-        /// This is not used in all services, and is only used for display purposes
-        website: Option<String>,
-    },
 }
 
-impl ForwarderServiceType {
-    /// Generate a username using the specified email forwarding service
-    /// This requires an HTTP client to be passed in, as the service will need to make API calls
-    async fn generate(
-        self,
-        http: &reqwest::Client,
-        website: Option<String>,
-    ) -> Result<String, UsernameError> {
-        use ForwarderServiceType::*;
-
-        use crate::username_forwarders::*;
-
+impl fmt::Debug for UsernameGeneratorRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AddyIo {
-                api_token,
-                domain,
-                base_url,
-            } => addyio::generate(http, api_token, domain, base_url, website).await,
-            DuckDuckGo { token } => duckduckgo::generate(http, token).await,
-            Firefox { api_token } => firefox::generate(http, api_token, website).await,
-            Fastmail { api_token } => fastmail::generate(http, api_token, website).await,
-            ForwardEmail { api_token, domain } => {
-                forwardemail::generate(http, api_token, domain, website).await
-            }
-            SimpleLogin { api_key, base_url } => {
-                simplelogin::generate(http, api_key, base_url, website).await
-            }
+            Self::Word {
+                capitalize,
+                include_number,
+            } => formatter
+                .debug_struct("Word")
+                .field("capitalize", capitalize)
+                .field("include_number", include_number)
+                .finish(),
+            Self::Subaddress { r#type, .. } => formatter
+                .debug_struct("Subaddress")
+                .field("type", r#type)
+                .field("email", &"[REDACTED]")
+                .finish(),
+            Self::Catchall { r#type, .. } => formatter
+                .debug_struct("Catchall")
+                .field("type", r#type)
+                .field("domain", &"[REDACTED]")
+                .finish(),
         }
     }
 }
 
 /// Implementation of the username generator.
 ///
-/// Note: The HTTP client is passed in as a required parameter for convenience,
-/// as some username generators require making API calls.
-pub(crate) async fn username(
-    input: UsernameGeneratorRequest,
-    http: &reqwest::Client,
-) -> Result<String, UsernameError> {
+/// All username strategies are pure and local. Remote alias creation uses the explicit,
+/// provider-neutral alias lifecycle service instead of embedding credentials in this request.
+pub(crate) fn username(input: UsernameGeneratorRequest) -> Result<String, UsernameError> {
     use UsernameGeneratorRequest::*;
     use bitwarden_random::rng;
     match input {
@@ -165,7 +115,6 @@ pub(crate) async fn username(
         } => Ok(username_word(&mut rng(), capitalize, include_number)),
         Subaddress { r#type, email } => Ok(username_subaddress(&mut rng(), r#type, email)),
         Catchall { r#type, domain } => Ok(username_catchall(&mut rng(), r#type, domain)),
-        Forwarded { service, website } => service.generate(http, website).await,
     }
 }
 
@@ -284,5 +233,24 @@ mod tests {
             "test.com".into(),
         );
         assert_eq!(user, "bitwarden.com@test.com");
+    }
+
+    #[test]
+    fn generator_request_debug_redacts_user_inputs() {
+        let subaddress = UsernameGeneratorRequest::Subaddress {
+            r#type: AppendType::WebsiteName {
+                website: "append-hostname-that-must-not-render.example".into(),
+            },
+            email: "mailbox-that-must-not-render@example.test".into(),
+        };
+        let rendered = format!("{subaddress:?}");
+
+        for private_value in [
+            "append-hostname-that-must-not-render.example",
+            "mailbox-that-must-not-render@example.test",
+        ] {
+            assert!(!rendered.contains(private_value));
+        }
+        assert!(rendered.contains("[REDACTED]"));
     }
 }

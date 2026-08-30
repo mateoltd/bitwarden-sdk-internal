@@ -8,6 +8,8 @@ use auth::AuthClient;
 use bitwarden_core::{ClientSettings, auth::ClientManagedTokens};
 
 #[allow(missing_docs)]
+pub mod alias;
+#[allow(missing_docs)]
 pub mod auth;
 #[allow(missing_docs)]
 pub mod crypto;

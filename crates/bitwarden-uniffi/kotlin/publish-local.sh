@@ -4,25 +4,28 @@ set -eo pipefail
 cd "$(dirname "$0")"
 
 SDK_REPO_ROOT="$(git rev-parse --show-toplevel)"
+TARGET_DIRECTORY="${CARGO_TARGET_DIR:-$SDK_REPO_ROOT/target}"
+
+"$SDK_REPO_ROOT/scripts/check-oss-artifact-boundary.sh"
 
 mkdir -p ./sdk/src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86_64,x86}
 
 # Build arm64 for emulator
 cargo bin cross build -p bitwarden-uniffi --release --target=aarch64-linux-android
-mv $SDK_REPO_ROOT/target/aarch64-linux-android/release/libbitwarden_uniffi.so ./sdk/src/main/jniLibs/arm64-v8a/libbitwarden_uniffi.so
+mv "$TARGET_DIRECTORY/aarch64-linux-android/release/libbitwarden_uniffi.so" ./sdk/src/main/jniLibs/arm64-v8a/libbitwarden_uniffi.so
 
 # Build other archs
 if [ "$1" = "all" ]; then
     echo "Building for all architectures"
     
     cargo bin cross build -p bitwarden-uniffi --release --target=armv7-linux-androideabi
-    mv $SDK_REPO_ROOT/target/armv7-linux-androideabi/release/libbitwarden_uniffi.so ./sdk/src/main/jniLibs/armeabi-v7a/libbitwarden_uniffi.so
+    mv "$TARGET_DIRECTORY/armv7-linux-androideabi/release/libbitwarden_uniffi.so" ./sdk/src/main/jniLibs/armeabi-v7a/libbitwarden_uniffi.so
 
     cargo bin cross build -p bitwarden-uniffi --release --target=x86_64-linux-android
-    mv $SDK_REPO_ROOT/target/x86_64-linux-android/release/libbitwarden_uniffi.so ./sdk/src/main/jniLibs/x86_64/libbitwarden_uniffi.so
+    mv "$TARGET_DIRECTORY/x86_64-linux-android/release/libbitwarden_uniffi.so" ./sdk/src/main/jniLibs/x86_64/libbitwarden_uniffi.so
 
     cargo bin cross build -p bitwarden-uniffi --release --target=i686-linux-android
-    mv $SDK_REPO_ROOT/target/i686-linux-android/release/libbitwarden_uniffi.so ./sdk/src/main/jniLibs/x86/libbitwarden_uniffi.so
+    mv "$TARGET_DIRECTORY/i686-linux-android/release/libbitwarden_uniffi.so" ./sdk/src/main/jniLibs/x86/libbitwarden_uniffi.so
 fi
 
 # Generate latest bindings
@@ -30,3 +33,6 @@ fi
 
 # Publish to local maven (~/.m2/repository/com/bitwarden/sdk-android)
 ./gradlew sdk:publishToMavenLocal -Pversion=LOCAL
+
+"$SDK_REPO_ROOT/scripts/check-oss-artifact-boundary.sh" \
+    --kotlin "$PWD/sdk/build/outputs/aar/sdk-release.aar"

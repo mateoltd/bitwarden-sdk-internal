@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(target_arch = "wasm32")]
+mod alias;
 mod client;
 mod custom_types;
 mod flight_recorder;
@@ -8,6 +10,8 @@ mod platform;
 mod pure_crypto;
 mod ssh;
 
+#[cfg(target_arch = "wasm32")]
+pub use alias::AliasClient;
 pub use bitwarden_ipc::wasm::*;
 pub use bitwarden_managed_settings::ManagedSettingsClient;
 pub use bitwarden_organization_invite_link::*;

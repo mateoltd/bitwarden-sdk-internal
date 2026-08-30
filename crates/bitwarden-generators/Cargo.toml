@@ -25,7 +25,6 @@ bitwarden-error = { workspace = true }
 bitwarden-random = { workspace = true }
 password-rules-parser = { workspace = true }
 rand = { workspace = true }
-reqwest = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -35,10 +34,8 @@ uniffi = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]
-bitwarden-api-base = { workspace = true }
 rand_chacha = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
-wiremock = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,7 +1,8 @@
 {
   "name": "@bitwarden/sdk-internal",
-  "version": "0.1.0",
-  "license": "GPL-3.0",
+  "version": "0.3.0-alias-provider-neutral.2",
+  "aliasReferenceSchemaVersion": 1,
+  "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bitwarden/sdk-internal.git"

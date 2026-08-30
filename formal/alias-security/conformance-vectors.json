@@ -1,0 +1,467 @@
+{
+  "contractVersion": 1,
+  "modelRevision": "alias-security-v1-provider-neutral",
+  "modelFiles": [
+    "AliasVault.tla",
+    "AliasVault.cfg",
+    "AliasJournal.tla",
+    "AliasJournal.cfg",
+    "AliasLifecycle.tla",
+    "AliasLifecycle.cfg",
+    "AliasLifecycleQuiescent.cfg"
+  ],
+  "modelSha256": "d913386eba0ec91e723f5c2e0e729a04d065f09f1cb657f0e1ca281c99d0e5b2",
+  "referenceSchema": {
+    "version": 1,
+    "loginMemberName": "aliasReference",
+    "maxEncodedBytes": 4096,
+    "maxAliasIdBytes": 512,
+    "orderedFields": ["version", "connectionId", "aliasId", "address"],
+    "forbiddenFields": [
+      "adapterId",
+      "provider",
+      "providerInstance",
+      "endpoint",
+      "apiToken",
+      "token",
+      "credential",
+      "password",
+      "signedSuffix",
+      "mailboxCredential",
+      "request",
+      "response",
+      "headers",
+      "query"
+    ],
+    "credentialSentinel": "formal-secret-must-never-cross-an-alias-boundary"
+  },
+  "identities": {
+    "primary": {
+      "connectionId": "11111111-1111-4111-8111-111111111111"
+    },
+    "secondConnection": {
+      "connectionId": "22222222-2222-4222-8222-222222222222"
+    }
+  },
+  "referenceVectors": [
+    {
+      "name": "opaque-provider-id-is-not-parsed",
+      "identity": "primary",
+      "aliasId": "opaque/id:%2F7",
+      "address": "first@example.test",
+      "expectedCanonical": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "same-opaque-id-isolated-by-connection",
+      "identity": "secondConnection",
+      "aliasId": "opaque/id:%2F7",
+      "address": "second@example.test",
+      "expectedCanonical": "{\"version\":1,\"connectionId\":\"22222222-2222-4222-8222-222222222222\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"second@example.test\"}"
+    },
+    {
+      "name": "numeric-looking-id-remains-a-string",
+      "identity": "primary",
+      "aliasId": "0007",
+      "address": "leading-zero@example.test",
+      "expectedCanonical": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"0007\",\"address\":\"leading-zero@example.test\"}"
+    }
+  ],
+  "rejectedReferenceVectors": [
+    {
+      "name": "missing-version",
+      "classification": "malformed",
+      "encoded": "{\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "zero-version",
+      "classification": "unsupportedVersion",
+      "encoded": "{\"version\":0,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "malformed-json",
+      "classification": "malformed",
+      "encoded": "{\"version\":"
+    },
+    {
+      "name": "unreleased-version-two",
+      "classification": "unsupportedVersion",
+      "encoded": "{\"version\":2,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "unknown-future-version",
+      "classification": "unsupportedVersion",
+      "encoded": "{\"version\":4294967295,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "old-provider-specific-shape-is-not-v1",
+      "classification": "malformed",
+      "encoded": "{\"version\":1,\"provider\":\"simplelogin\",\"providerInstance\":\"https://aliases.example.test/\",\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":7,\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "numeric-alias-id",
+      "classification": "malformed",
+      "encoded": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":7,\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "unknown-endpoint-field",
+      "classification": "malformed",
+      "encoded": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\",\"endpoint\":\"https://aliases.example.test/\"}"
+    },
+    {
+      "name": "noncanonical-connection-id",
+      "classification": "invalidValue",
+      "encoded": "{\"version\":1,\"connectionId\":\"11111111-1111-1111-1111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "empty-opaque-id",
+      "classification": "invalidValue",
+      "encoded": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"\",\"address\":\"first@example.test\"}"
+    },
+    {
+      "name": "noncanonical-address",
+      "classification": "invalidValue",
+      "encoded": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"First@Example.Test\"}"
+    }
+  ],
+  "adapterVectors": {
+    "acceptedIds": ["simplelogin", "example.alias-v2", "org.example-alias"],
+    "rejectedIds": [
+      "SimpleLogin",
+      "simple login",
+      "org.example_alias",
+      "https://provider.test",
+      "-leading",
+      "trailing-"
+    ],
+    "commonContractMustNotContain": ["SimpleLogin", "AddyIo", "Fastmail", "DuckDuckGo"]
+  },
+  "capabilityVectors": {
+    "firstClass": {
+      "create": true,
+      "list": true,
+      "get": true,
+      "enableDisable": true,
+      "delete": true,
+      "createSendReplyIdentity": true,
+      "listSendReplyIdentities": true,
+      "removeSendReplyIdentity": true,
+      "extensions": []
+    },
+    "withExtension": {
+      "extensions": ["send-reply.block"]
+    },
+    "rejectedExtensions": ["SendReply.Block", "provider/simplelogin", " credentials.read "]
+  },
+  "journalSchema": {
+    "version": 1,
+    "maxEvents": 10000,
+    "maxCausalEntries": 128,
+    "orderedJournalFields": ["version", "connectionId", "events"],
+    "orderedEventFields": [
+      "version",
+      "eventId",
+      "operationId",
+      "replicaId",
+      "sequence",
+      "causal",
+      "operation",
+      "phase",
+      "target",
+      "lifecycle",
+      "error"
+    ],
+    "forbiddenFields": [
+      "adapterId",
+      "provider",
+      "providerInstance",
+      "endpoint",
+      "credential",
+      "token",
+      "request",
+      "response",
+      "body",
+      "headers",
+      "query"
+    ]
+  },
+  "journalMergeVectors": [
+    {
+      "name": "dispatched-delete-with-lost-response-remains-unknown",
+      "connectionId": "11111111-1111-4111-8111-111111111111",
+      "leftEvents": [
+        {
+          "version": 1,
+          "eventId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          "operationId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+          "replicaId": "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+          "sequence": 1,
+          "causal": [],
+          "operation": "delete",
+          "phase": "dispatched",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": null,
+          "error": null
+        }
+      ],
+      "rightEvents": [
+        {
+          "version": 1,
+          "eventId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          "operationId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+          "replicaId": "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+          "sequence": 1,
+          "causal": [],
+          "operation": "delete",
+          "phase": "dispatched",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": null,
+          "error": null
+        },
+        {
+          "version": 1,
+          "eventId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+          "operationId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+          "replicaId": "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+          "sequence": 2,
+          "causal": [
+            {
+              "replicaId": "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+              "sequence": 1
+            }
+          ],
+          "operation": "delete",
+          "phase": "outcome-unknown",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": null,
+          "error": "outcome-unknown"
+        }
+      ],
+      "expected": {
+        "mergedEventCount": 2,
+        "phase": "outcome-unknown",
+        "automaticReplay": false,
+        "commutative": true,
+        "associative": true,
+        "idempotent": true
+      }
+    },
+    {
+      "name": "delete-tombstone-dominates-stale-enabled-observation",
+      "connectionId": "11111111-1111-4111-8111-111111111111",
+      "leftEvents": [
+        {
+          "version": 1,
+          "eventId": "dddddddd-dddd-4ddd-8ddd-ddddddddddd1",
+          "operationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+          "replicaId": "ffffffff-ffff-4fff-8fff-fffffffffff1",
+          "sequence": 1,
+          "causal": [],
+          "operation": "enable",
+          "phase": "acknowledged",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": "enabled",
+          "error": null
+        }
+      ],
+      "rightEvents": [
+        {
+          "version": 1,
+          "eventId": "dddddddd-dddd-4ddd-8ddd-ddddddddddd2",
+          "operationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2",
+          "replicaId": "99999999-9999-4999-8999-999999999991",
+          "sequence": 1,
+          "causal": [],
+          "operation": "delete",
+          "phase": "acknowledged",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": "deleted",
+          "error": null
+        }
+      ],
+      "expected": {
+        "lifecycle": "deleted",
+        "tombstoned": true,
+        "resurrected": false
+      }
+    },
+    {
+      "name": "concurrent-incompatible-lifecycle-observations-conflict",
+      "connectionId": "11111111-1111-4111-8111-111111111111",
+      "leftEvents": [
+        {
+          "version": 1,
+          "eventId": "77777777-7777-4777-8777-777777777771",
+          "operationId": "66666666-6666-4666-8666-666666666661",
+          "replicaId": "55555555-5555-4555-8555-555555555551",
+          "sequence": 1,
+          "causal": [],
+          "operation": "enable",
+          "phase": "acknowledged",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": "enabled",
+          "error": null
+        }
+      ],
+      "rightEvents": [
+        {
+          "version": 1,
+          "eventId": "77777777-7777-4777-8777-777777777772",
+          "operationId": "66666666-6666-4666-8666-666666666662",
+          "replicaId": "44444444-4444-4444-8444-444444444441",
+          "sequence": 1,
+          "causal": [],
+          "operation": "disable",
+          "phase": "acknowledged",
+          "target": {
+            "version": 1,
+            "connectionId": "11111111-1111-4111-8111-111111111111",
+            "aliasId": "opaque/id:%2F7",
+            "address": "first@example.test"
+          },
+          "lifecycle": "disabled",
+          "error": null
+        }
+      ],
+      "expected": {
+        "consistency": "conflicted",
+        "silentlyChosen": false
+      }
+    }
+  ],
+  "rejectedJournalVectors": [
+    {
+      "name": "foreign-target-connection",
+      "classification": "permissionDenied"
+    },
+    {
+      "name": "same-event-id-different-content",
+      "classification": "syncConflict"
+    },
+    {
+      "name": "credential-field",
+      "classification": "invalidInput"
+    },
+    {
+      "name": "unsorted-or-duplicate-causal-clock",
+      "classification": "invalidInput"
+    }
+  ],
+  "reconciliationVectors": [
+    {
+      "name": "refresh-current-reference-and-preserve-unrelated-items",
+      "connectionId": "11111111-1111-4111-8111-111111111111",
+      "aliases": [
+        {
+          "aliasId": "opaque/id:%2F7",
+          "address": "first@example.test",
+          "lifecycle": "enabled",
+          "freshness": "current",
+          "consistency": "clean"
+        }
+      ],
+      "ciphers": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "username": "old-first@example.test",
+          "name": "Alias login",
+          "notes": "unrelated target notes",
+          "customFieldName": "unrelated.custom",
+          "customFieldValue": "preserve-target-field",
+          "aliasReference": "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:%2F7\",\"address\":\"old-first@example.test\"}"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "username": "owner@example.test",
+          "name": "Ordinary login",
+          "notes": "preserve-entire-cipher",
+          "customFieldName": "ordinary.custom",
+          "customFieldValue": "preserve-ordinary-field"
+        }
+      ],
+      "expected": {
+        "proposedRepairs": 1,
+        "changedCipherIds": ["00000000-0000-4000-8000-000000000001"],
+        "unchangedActionsOnReplay": 1,
+        "actionsAfterReplan": 0
+      }
+    }
+  ],
+  "lifecycleTraces": [
+    {
+      "name": "already-disabled-is-read-only-success",
+      "aliasId": "opaque-disabled",
+      "desiredEnabled": false,
+      "initialEnabled": false,
+      "steps": [{ "kind": "get", "remoteEnabledAfter": false }],
+      "expectedEnabled": false,
+      "expectedMutationCount": 0
+    },
+    {
+      "name": "replayed-toggle-bodies-require-fresh-read",
+      "aliasId": "opaque-replayed",
+      "desiredEnabled": false,
+      "initialEnabled": true,
+      "steps": [
+        { "kind": "get", "remoteEnabledAfter": true },
+        { "kind": "toggle", "remoteEnabledAfter": true, "responseEnabled": false },
+        { "kind": "get", "remoteEnabledAfter": true },
+        { "kind": "toggle", "remoteEnabledAfter": false, "responseEnabled": true },
+        { "kind": "get", "remoteEnabledAfter": false }
+      ],
+      "expectedEnabled": false,
+      "expectedMutationCount": 2
+    },
+    {
+      "name": "continuous-interference-terminates-without-false-success",
+      "aliasId": "opaque-interference",
+      "desiredEnabled": false,
+      "initialEnabled": true,
+      "expectedErrorCode": "sync-conflict",
+      "expectedMutationCount": 3
+    }
+  ],
+  "operationSemantics": {
+    "disable": {
+      "remoteResource": "retained",
+      "vaultCipher": "unchanged",
+      "successEvidence": "fresh-validated-read"
+    },
+    "delete": {
+      "remoteResource": "removed-or-already-absent",
+      "vaultCipher": "unchanged",
+      "transportFailureAfterDispatch": "outcome-unknown-no-automatic-replay",
+      "tombstone": "prevents-resurrection"
+    },
+    "telemetryAllowlist": ["operation", "platform", "errorCode", "success"]
+  }
+}

@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 
 mod generator_client;
-mod username_forwarders;
 pub use generator_client::{GeneratorClient, GeneratorClientsExt};
 pub(crate) mod passphrase;
 pub use passphrase::{
@@ -16,7 +15,7 @@ pub use password::{
 pub(crate) mod passwordrules;
 pub use passwordrules::{PasswordRulesError, parse_password_rules};
 pub(crate) mod username;
-pub use username::{ForwarderServiceType, UsernameError, UsernameGeneratorRequest};
+pub use username::{UsernameError, UsernameGeneratorRequest};
 mod util;
 
 #[cfg(feature = "uniffi")]
