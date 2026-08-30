@@ -1,7 +1,7 @@
-# Each JVM-safe component is generated from its authoritative crate config. This
-# shared map keeps cross-component imports stable when UniFFI generates one
-# component at a time.
-[bindings.kotlin.external_packages]
+# UniFFI 0.32 treats --config as a global layered configuration. Each JVM-safe
+# component still inherits its authoritative crate config, while this default
+# keeps cross-component imports stable for the combined host generation.
+[defaults.bindings.kotlin.external_packages]
 bitwarden_alias = "com.bitwarden.alias"
 bitwarden_api_base = "com.bitwarden.api.base"
 bitwarden_auth = "com.bitwarden.auth"

@@ -37,46 +37,18 @@ native_path="$target_directory/release/$native_library"
     exit 1
 }
 
-cargo run --locked --manifest-path "$repository_root/Cargo.toml" --package uniffi-bindgen -- \
-    generate "$native_path" \
-    --language kotlin \
-    --no-format \
-    --out-dir "$temporary_directory/generated"
+host_config="$temporary_directory/host-uniffi.toml"
+cp "$repository_root/support/alias-sdk-release/kotlin-host-uniffi.toml" "$host_config"
 
-# The checked-in component configs target Android where required. Regenerate
-# those components individually from their authoritative config with only the
-# Android cleaner disabled, preserving package names, custom types, and API.
+# UniFFI 0.32 layers global per-crate overrides after each authoritative
+# uniffi.toml. Disable only the Android cleaner for the JVM package while
+# preserving package names, custom types, and every other crate-owned option.
 component_count=0
 while IFS= read -r component_config; do
     component_directory="$(basename "$(dirname "$component_config")")"
     component_crate="${component_directory//-/_}"
-    host_config="$temporary_directory/${component_crate}-host.toml"
-    host_directory="$temporary_directory/host-components/$component_crate"
-    sed 's/^android = true$/android = false/' "$component_config" >"$host_config"
-    sed -n '/^\[bindings.kotlin.external_packages\]/,$p' \
-        "$repository_root/support/alias-sdk-release/kotlin-host-uniffi.toml" >>"$host_config"
-
-    cargo run --locked --manifest-path "$repository_root/Cargo.toml" --package uniffi-bindgen -- \
-        generate "$native_path" \
-        --library \
-        --crate "$component_crate" \
-        --language kotlin \
-        --config "$host_config" \
-        --no-format \
-        --out-dir "$host_directory"
-
-    host_source_count="$(find "$host_directory" -type f -name "${component_crate}.kt" -print | wc -l | tr -d ' ')"
-    [[ "$host_source_count" -eq 1 ]] || {
-        echo "Kotlin host artifact gate failed: expected one binding for $component_crate" >&2
-        exit 1
-    }
-    host_source="$(find "$host_directory" -type f -name "${component_crate}.kt" -print -quit)"
-    relative_source="${host_source#"$host_directory"/}"
-    [[ -f "$temporary_directory/generated/$relative_source" ]] || {
-        echo "Kotlin host artifact gate failed: authoritative binding path changed for $component_crate" >&2
-        exit 1
-    }
-    cp "$host_source" "$temporary_directory/generated/$relative_source"
+    printf '\n[crates.%s.bindings.kotlin]\nandroid = false\n' \
+        "$component_crate" >>"$host_config"
     component_count=$((component_count + 1))
 done < <(
     find "$repository_root/crates" -type f -name uniffi.toml \
@@ -87,6 +59,14 @@ done < <(
     echo "Kotlin host artifact gate failed: no Android UniFFI components were found" >&2
     exit 1
 }
+
+cargo run --locked --manifest-path "$repository_root/Cargo.toml" --package uniffi-bindgen -- \
+    generate "$native_path" \
+    --language kotlin \
+    --config "$host_config" \
+    --no-format \
+    --out-dir "$temporary_directory/generated"
+
 android_imports="$(
     find "$temporary_directory/generated" -type f -name '*.kt' \
         -exec grep -nH '^import android\.' {} + || true
