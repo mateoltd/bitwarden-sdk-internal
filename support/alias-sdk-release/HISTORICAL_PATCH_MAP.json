@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "historicalHead": "4a08b5fe81c363169d36f582cc13c03b59d212d8",
+  "rebasedBase": "b904fe4629d8cecd9edf63440149297e185d4fa1",
+  "mappings": [
+    {
+      "historicalCommit": "e90520c5789ab6626da241460ed87c94a17c4b55",
+      "rebasedCommit": "9da7e13c6d3e38543e73445cf2d377028899aaec",
+      "historicalPatchId": "e7014e595057edd23e11587389fec56d47156540",
+      "rebasedPatchId": "61f32f588870887ba1237b0e2cdfda3a90d7830a",
+      "equivalence": "semantic",
+      "rationale": "Regenerated the workspace dependency placement and lockfile against upstream additions while preserving the alias crate and API."
+    },
+    {
+      "historicalCommit": "4b8adb0352cbd8137e7d364c1e6467caa00992fc",
+      "rebasedCommit": "22c589454cb1db7002bc2f310febf379359e9fc6",
+      "historicalPatchId": "14cc8c594efefb3c43f0702f4c880fafea4640bb",
+      "rebasedPatchId": "0eb63bf3cc08a89fee0e1bca0e9bbc5079efa2bd",
+      "equivalence": "semantic",
+      "rationale": "Retained upstream managed-settings exports and the optional commercial feature edge while adding the unchanged public alias binding surface."
+    },
+    {
+      "historicalCommit": "1a63afcb36882978416c300c0fe1cc35014766f3",
+      "rebasedCommit": "816338f9c54bf438c2ae410f366884e96cee92c2",
+      "historicalPatchId": "952597252accf8dbeed267f50d046c7d7423c7aa",
+      "rebasedPatchId": "952597252accf8dbeed267f50d046c7d7423c7aa",
+      "equivalence": "exact",
+      "rationale": ""
+    },
+    {
+      "historicalCommit": "67933f5ddb6bb24e5f83449bb401ae85168bc889",
+      "rebasedCommit": "c7da8fa91996460a1e33b97bab18fcbfad58d627",
+      "historicalPatchId": "06f0cfa500583a3fa3bfc399356cb3f18b2850fc",
+      "rebasedPatchId": "a06c9133d0cf153230fb03aa630fdd7ebaeafbdd",
+      "equivalence": "semantic",
+      "rationale": "Composed deterministic target and codegen behavior with upstream's fail-closed non-commercial build guard."
+    },
+    {
+      "historicalCommit": "7de5012952395dfa7d5403e7e388cbfa55c44b4f",
+      "rebasedCommit": "8e0d385da5582f57809ab83fdfcaf1e3c166cd71",
+      "historicalPatchId": "c0154610ac0c63aa0a76b1aca460576a5a044e10",
+      "rebasedPatchId": "c0154610ac0c63aa0a76b1aca460576a5a044e10",
+      "equivalence": "exact",
+      "rationale": ""
+    },
+    {
+      "historicalCommit": "4a08b5fe81c363169d36f582cc13c03b59d212d8",
+      "rebasedCommit": "061e876c0f620a70b8501b37d1cf421f9c5d3915",
+      "historicalPatchId": "88325321386a57d5c698a8fd04934cc6f4251d81",
+      "rebasedPatchId": "88325321386a57d5c698a8fd04934cc6f4251d81",
+      "equivalence": "exact",
+      "rationale": ""
+    }
+  ]
+}

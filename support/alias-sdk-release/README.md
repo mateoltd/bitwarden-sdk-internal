@@ -8,7 +8,7 @@ branch.
 
 `VERSION` is the canonical unreleased prerelease, and `ALIAS_REFERENCE_SCHEMA_VERSION` is the
 canonical wire-schema version stamped into every package. The current candidate is
-`0.3.0-alias-provider-neutral.1`, schema v1. It corrects the unreleased v1 shape directly; no
+`0.3.0-alias-provider-neutral.2`, schema v1. It corrects the unreleased v1 shape directly; no
 migration, legacy decoder, dual schema, or deprecated provider-specific form belongs in an artifact.
 `PREVIOUS_PUBLIC_ALIAS_HEAD` records the exact unreleased public SDK head whose v1 contract this
 candidate replaces directly. `ios-integration.json` records the exact iOS feature consumer and its
@@ -49,7 +49,8 @@ The release workflow must pass all of these gates before assembling a candidate:
 8. the pinned real SimpleLogin lifecycle on candidate source;
 9. a machine-readable handoff manifest with source and consumer pins, decisions, package paths,
    SHA-256 digests, audit/SBOM evidence, and per-package reproducibility evidence;
-10. keyless GitHub artifact attestations over every final candidate file for non-pull-request runs.
+10. a signed GitHub provenance bundle for non-pull-request runs, retained as supplemental evidence
+    without claiming that the repository exposes GitHub's attestation verification endpoint.
 
 Every consumer is copied to a temporary directory and receives only a packaged artifact. A missing
 compiler, SDK, NDK, audit tool, or attestation permission is a failed prerequisite gate, never a
@@ -70,13 +71,10 @@ exception, or an expired review.
 
 The workflow is candidate-only. It never publishes a registry package, creates a Git tag, creates a
 GitHub release, opens a pull request, or pushes a branch. Pull-request runs produce unsigned preview
-artifacts because GitHub does not grant trusted keyless identity to untrusted fork code. Push and
-manual candidate runs use GitHub's OIDC identity and artifact attestation service. Verify any
-downloaded file with both `SHA256SUMS` and:
-
-```bash
-gh attestation verify --repo mateoltd/bitwarden-sdk-internal <candidate-file>
-```
+artifacts. Push and manual candidate runs request a signed provenance bundle through GitHub Actions.
+The handoff manifest does not claim a GitHub-hosted attestation because this repository has not
+exposed one through GitHub's attestation API. Verify downloaded files against `SHA256SUMS` and
+retain the bundled provenance as supplemental evidence.
 
 ## Clean-room reproduction
 
@@ -87,8 +85,8 @@ Locally, build twice and compare with the same commands used by CI:
 scripts/alias-sdk/build-wasm.sh /tmp/alias-wasm-a
 scripts/alias-sdk/build-wasm.sh /tmp/alias-wasm-b
 scripts/alias-sdk/verify-reproducible.sh \
-  /tmp/alias-wasm-a/bitwarden-sdk-internal-0.3.0-alias-provider-neutral.1.tgz \
-  /tmp/alias-wasm-b/bitwarden-sdk-internal-0.3.0-alias-provider-neutral.1.tgz
+  /tmp/alias-wasm-a/bitwarden-sdk-internal-0.3.0-alias-provider-neutral.2.tgz \
+  /tmp/alias-wasm-b/bitwarden-sdk-internal-0.3.0-alias-provider-neutral.2.tgz
 ```
 
 Equivalent jobs run for Swift, Kotlin/JVM, Android, and Android native libraries. Package archives
