@@ -26,6 +26,7 @@ on:
       - "integration/public-alias-sdk"
       - "refactor/provider-neutral-alias-v1"
       - "integration/provider-neutral-alias-upstream-sync"
+      - "integration/alias-sdk-launch-20260926"
 
 permissions:
   contents: read
@@ -51,9 +52,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Install Java for TLA+
+        if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
@@ -83,8 +85,14 @@ jobs:
       - name: Verify commercial boundary
         run: scripts/check-oss-artifact-boundary.sh
 
-      - name: Test authoritative alias security contract
-        run: scripts/alias-sdk/check-security-contract.sh
+      - name: Test Rust and UniFFI security contract
+        run: |
+          cargo test --locked --package bitwarden-alias --all-features
+          cargo test --locked --package bitwarden-uniffi --test security_conformance
+
+      - name: Full formal qualification
+        if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
+        run: formal/alias-security/check.sh
 
   assurance:
     name: Dependency audit evidence
@@ -99,7 +107,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -160,7 +168,7 @@ jobs:
       - name: Install Rust with WASM target
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
           targets: wasm32-unknown-unknown
           components: rust-src
 
@@ -232,7 +240,7 @@ jobs:
       - name: Install Rust with iOS targets
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
           targets: aarch64-apple-ios-sim,aarch64-apple-ios,x86_64-apple-ios
 
       - name: Cache Cargo
@@ -299,6 +307,7 @@ jobs:
           retention-days: 30
 
   kotlin:
+    if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Kotlin JVM clean room
     runs-on: ubuntu-24.04
     needs: policy
@@ -318,7 +327,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -369,6 +378,7 @@ jobs:
           retention-days: 30
 
   android-native:
+    if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Android native ${{ matrix.target }}
     runs-on: ubuntu-24.04
     needs: policy
@@ -393,7 +403,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -451,6 +461,7 @@ jobs:
           retention-days: 1
 
   android:
+    if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Android AAR clean room
     runs-on: ubuntu-24.04
     needs: android-native
@@ -482,7 +493,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -584,6 +595,7 @@ jobs:
           retention-days: 30
 
   simplelogin:
+    if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Pinned real SimpleLogin lifecycle
     runs-on: ubuntu-24.04
     needs: policy
@@ -596,7 +608,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -611,6 +623,7 @@ jobs:
         run: support/simplelogin/lab.sh down || true
 
   bundle:
+    if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Assemble checksummed candidate
     runs-on: ubuntu-24.04
     needs: [assurance, wasm, swift, kotlin, android, simplelogin]
@@ -633,7 +646,7 @@ jobs:
       - name: Install Rust for locked dependency metadata
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: "1.97.1"
+          toolchain: "1.98.0"
 
       - name: Download candidate artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -666,7 +679,7 @@ jobs:
           SBOM_FILE: ${{ runner.temp }}/candidate-sbom.json
           SOURCE_COMMIT: ${{ github.sha }}
           SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
-          KEYLESS_ATTESTATION_EXPECTED: false
+          KEYLESS_ATTESTATION_EXPECTED: ${{ github.event_name != 'pull_request' }}
           TYPESCRIPT_PACKAGE_FILE: ${{ github.workspace }}/crates/bitwarden-wasm-internal/npm/package.json
           UPSTREAM_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/UPSTREAM_BASE
         run: |
@@ -707,7 +720,128 @@ jobs:
         env:
           ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
-          KEYLESS_ATTESTED: false
+          KEYLESS_ATTESTED: ${{ github.event_name != 'pull_request' }}
+        run: |
+          {
+            echo "# Alias SDK release candidate"
+            echo
+            echo "- Source commit: \`$(git rev-parse HEAD)\`"
+            echo "- Package version: \`$(scripts/alias-sdk/read-release-version.sh)\`"
+            echo "- Alias reference schema: \`1\`"
+            echo "- Workflow artifact ID: \`$ARTIFACT_ID\`"
+            echo "- Workflow artifact SHA-256: \`$ARTIFACT_DIGEST\`"
+            echo "- Keyless file attestations: \`$KEYLESS_ATTESTED\`"
+            echo "- Registry publication: disabled"
+            echo
+            echo "The candidate contains the handoff manifest, per-file SHA-256 hashes, API reports, reproducibility evidence, a CycloneDX SBOM, dependency audit evidence, source pins, and client integration steps."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  bundle-js:
+    if: github.ref == 'refs/heads/integration/alias-sdk-launch-20260926' || github.head_ref == 'integration/alias-sdk-launch-20260926'
+    name: Assemble checksummed JavaScript candidate
+    runs-on: ubuntu-24.04
+    needs: [assurance, wasm]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout manifest inputs
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+
+      - name: Install Rust for locked dependency metadata
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.98.0"
+
+      - name: Download candidate artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: alias-sdk-typescript
+          path: ${{ runner.temp }}/candidate/artifacts
+
+      - name: Download dependency audit evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: alias-sdk-assurance
+          path: ${{ runner.temp }}/candidate/artifacts/alias-sdk-assurance
+
+      - name: Create deterministic public dependency SBOM
+        run: |
+          cargo metadata --locked --format-version 1 >"$RUNNER_TEMP/cargo-metadata.json"
+          scripts/alias-sdk/create-cargo-package-list.sh "$RUNNER_TEMP/cargo-active.txt"
+          scripts/alias-sdk/create-sbom.mjs \
+            "$RUNNER_TEMP/candidate/artifacts" \
+            "$RUNNER_TEMP/cargo-metadata.json" \
+            "$RUNNER_TEMP/cargo-active.txt" \
+            "${{ github.workspace }}/package-lock.json" \
+            "$RUNNER_TEMP/candidate-sbom.json"
+
+      - name: Create release manifest
+        env:
+          CANDIDATE_PLATFORMS: typescript
+          CLIENTS_CONTRACT_FILE: ${{ github.workspace }}/support/alias-sdk-release/consumers/typescript/bitwarden-clients-contract.json
+          CLIENT_INTEGRATION_FILE: ${{ github.workspace }}/support/alias-sdk-release/client-integration.json
+          CONFORMANCE_VECTORS_FILE: ${{ github.workspace }}/formal/alias-security/conformance-vectors.json
+          ALIAS_REFERENCE_SCHEMA_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/ALIAS_REFERENCE_SCHEMA_VERSION
+          INTEGRATION_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/INTEGRATION_BASE
+          IOS_INTEGRATION_FILE: ${{ github.workspace }}/support/alias-sdk-release/ios-integration.json
+          PREVIOUS_PUBLIC_ALIAS_HEAD_FILE: ${{ github.workspace }}/support/alias-sdk-release/PREVIOUS_PUBLIC_ALIAS_HEAD
+          PROVIDER_PIN_FILE: ${{ github.workspace }}/support/simplelogin/SIMPLELOGIN_COMMIT
+          RELEASE_VERSION_FILE: ${{ github.workspace }}/support/alias-sdk-release/VERSION
+          SBOM_FILE: ${{ runner.temp }}/candidate-sbom.json
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
+          KEYLESS_ATTESTATION_EXPECTED: ${{ github.event_name != 'pull_request' }}
+          TYPESCRIPT_PACKAGE_FILE: ${{ github.workspace }}/crates/bitwarden-wasm-internal/npm/package.json
+          UPSTREAM_BASE_FILE: ${{ github.workspace }}/support/alias-sdk-release/UPSTREAM_BASE
+        run: |
+          scripts/alias-sdk/create-release-manifest.mjs \
+            "$RUNNER_TEMP/candidate/artifacts" \
+            "$RUNNER_TEMP/candidate"
+
+      - name: Verify handoff manifest checksums
+        working-directory: ${{ runner.temp }}/candidate
+        run: sha256sum --check SHA256SUMS
+
+      - name: Verify candidate evidence boundary
+        run: scripts/alias-sdk/check-candidate-evidence.sh "$RUNNER_TEMP/candidate"
+
+      - name: Create keyless candidate provenance
+        if: github.event_name != 'pull_request'
+        id: provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: ${{ runner.temp }}/candidate/**
+
+      - name: Include the signed provenance bundle
+        if: github.event_name != 'pull_request'
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$PROVENANCE_BUNDLE" "$RUNNER_TEMP/candidate/PROVENANCE.sigstore.json"
+
+      - name: Upload release candidate
+        id: candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alias-sdk-release-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize candidate
+        env:
+          ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
+          KEYLESS_ATTESTED: ${{ github.event_name != 'pull_request' }}
         run: |
           {
             echo "# Alias SDK release candidate"

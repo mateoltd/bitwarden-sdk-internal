@@ -69,9 +69,9 @@ if [ -z "$RELEASE_FLAG" ]; then
   # codegen units even though the corresponding ABI type is retained by the final WASM module.
   export CARGO_PROFILE_DEV_CODEGEN_UNITS=1
 fi
-RUSTFLAGS='-Ctarget-cpu=mvp --cfg getrandom_backend="wasm_js"'" ${NO_COMMERCIAL_CFG}" RUSTC_BOOTSTRAP=1 cargo build -p bitwarden-wasm-internal -Zbuild-std=panic_abort,std --target wasm32-unknown-unknown ${RELEASE_FLAG} ${ENABLE_LICENSE_FEATURE}
-cargo run -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target bundler --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER} "${TARGET_DIRECTORY}/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm"
-cargo run -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target nodejs --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER}/node "${TARGET_DIRECTORY}/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm"
+RUSTFLAGS='-Ctarget-cpu=mvp --cfg getrandom_backend="wasm_js"'" ${NO_COMMERCIAL_CFG}" RUSTC_BOOTSTRAP=1 cargo build --locked -p bitwarden-wasm-internal -Zbuild-std=panic_abort,std --target wasm32-unknown-unknown ${RELEASE_FLAG} ${ENABLE_LICENSE_FEATURE}
+cargo run --locked -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target bundler --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER} "${TARGET_DIRECTORY}/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm"
+cargo run --locked -p wasm-bindgen-cli-runner --bin wasm-bindgen-runner -- --target nodejs --out-dir crates/bitwarden-wasm-internal/${NPM_FOLDER}/node "${TARGET_DIRECTORY}/wasm32-unknown-unknown/${BUILD_FOLDER}/bitwarden_wasm_internal.wasm"
 
 # Format TypeScript definition files only (skip generated .wasm.js files)
 npx prettier --write "./crates/bitwarden-wasm-internal/${NPM_FOLDER}/**/*.ts"

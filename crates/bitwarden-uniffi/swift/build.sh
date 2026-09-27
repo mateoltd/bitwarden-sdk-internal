@@ -28,9 +28,9 @@ else
   PROFILE_FLAG="--release"
 fi
 echo "$PROFILE_FLAG"
-cargo build --package bitwarden-uniffi --target aarch64-apple-ios-sim $PROFILE_FLAG
-cargo build --package bitwarden-uniffi --target aarch64-apple-ios $PROFILE_FLAG
-cargo build --package bitwarden-uniffi --target x86_64-apple-ios $PROFILE_FLAG
+cargo build --locked --package bitwarden-uniffi --target aarch64-apple-ios-sim $PROFILE_FLAG
+cargo build --locked --package bitwarden-uniffi --target aarch64-apple-ios $PROFILE_FLAG
+cargo build --locked --package bitwarden-uniffi --target x86_64-apple-ios $PROFILE_FLAG
 
 mkdir -p tmp/target/universal-ios-sim/$PROFILE
 
@@ -40,7 +40,7 @@ lipo -create "$TARGET_DIRECTORY/aarch64-apple-ios-sim/$PROFILE/libbitwarden_unif
   -output ./tmp/target/universal-ios-sim/$PROFILE/libbitwarden_uniffi.a
 
 # Generate swift bindings
-cargo run -p uniffi-bindgen generate \
+cargo run --locked -p uniffi-bindgen generate \
   "$TARGET_DIRECTORY/aarch64-apple-ios-sim/$PROFILE/libbitwarden_uniffi.dylib" \
   --language swift \
   --no-format \

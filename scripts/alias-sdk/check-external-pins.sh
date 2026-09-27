@@ -169,8 +169,8 @@ node -e '
   const fs = require("node:fs");
   const contract = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (contract.repository !== "https://github.com/mateoltd/bitwarden-clients.git") process.exit(1);
-  if (contract.branch !== "integration/public-alias-clients") process.exit(1);
-  if (contract.commit !== "4f6804e8c44b482bece57654afaa23980c71332a") process.exit(1);
+  if (contract.branch !== "integration/alias-clients-launch-20260926") process.exit(1);
+  if (contract.commit !== "018085075bfb18421bb22e7793360a6fd762da1d") process.exit(1);
 ' "$clients_contract" || fail "the bitwarden/clients contract pin is not the reviewed public integration commit"
 
 ios_contract="$repository_root/support/alias-sdk-release/ios-integration.json"

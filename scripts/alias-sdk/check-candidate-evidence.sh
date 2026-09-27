@@ -17,7 +17,8 @@ for required_file in handoff-manifest.json SHA256SUMS SBOM.cdx.json; do
 done
 
 api_reports="$(find "$candidate_directory/artifacts" -type f -name API-REPORT.txt -print | LC_ALL=C sort)"
-[[ "$(grep -c . <<<"$api_reports")" -eq 4 ]] || fail "expected four public API reports"
+expected_reports="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync(process.argv[1])); console.log(Object.keys(m.packages).length)' "$candidate_directory/handoff-manifest.json")"
+[[ "$expected_reports" -gt 0 && "$(grep -c . <<<"$api_reports")" -eq "$expected_reports" ]] || fail "public API reports differ from the candidate platform inventory"
 
 while IFS= read -r report; do
     if grep -Ein \

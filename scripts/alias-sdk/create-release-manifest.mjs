@@ -13,6 +13,19 @@ if (path.resolve(artifactDirectory) !== path.join(path.resolve(outputDirectory),
   throw new Error("ARTIFACT_DIRECTORY must be the artifacts child of OUTPUT_DIRECTORY");
 }
 
+// A platform candidate carries the same source/audit/provenance checks as the full bundle.
+// Omitted platforms are absent, never represented by placeholder artifacts.
+const platforms = (process.env.CANDIDATE_PLATFORMS ?? "typescript,swift,kotlin,android").split(",");
+const allowedPlatforms = new Set(["typescript", "swift", "kotlin", "android"]);
+if (
+  platforms.length === 0 ||
+  new Set(platforms).size !== platforms.length ||
+  platforms.some((platform) => !allowedPlatforms.has(platform))
+) {
+  throw new Error("CANDIDATE_PLATFORMS contains an unsupported or duplicate platform");
+}
+const platformDirectories = platforms.map((platform) => `alias-sdk-${platform}`);
+
 const requireFullCommit = (value, label) => {
   if (!/^[0-9a-f]{40}$/.test(value ?? "")) {
     throw new Error(`${label} must be a full Git commit SHA`);
@@ -159,12 +172,7 @@ const assertPackageProvenance = (directory) => {
   }
 };
 
-for (const directory of [
-  "alias-sdk-typescript",
-  "alias-sdk-swift",
-  "alias-sdk-kotlin",
-  "alias-sdk-android",
-]) {
+for (const directory of platformDirectories) {
   assertPackageProvenance(directory);
 }
 
@@ -202,33 +210,41 @@ const packageDefinitions = [
   },
 ];
 const packages = Object.fromEntries(
-  packageDefinitions.map(({ id, name, format, matches, supportingMatches }) => {
-    const matchingArtifacts = artifacts.filter(({ path: artifactPath }) => matches(artifactPath));
-    if (matchingArtifacts.length !== 1) {
-      throw new Error(
-        `Release manifest expected exactly one ${id} package, found ${matchingArtifacts.length}`,
-      );
-    }
-    const packageRecord = {
-      name,
-      version: releaseVersion,
-      aliasReferenceSchemaVersion,
-      format,
-      artifact: matchingArtifacts[0],
-    };
-    if (supportingMatches) {
-      const supportingArtifacts = artifacts.filter(({ path: artifactPath }) =>
-        supportingMatches(artifactPath),
-      );
-      if (supportingArtifacts.length !== 1) {
+  packageDefinitions
+    .filter(({ id }) =>
+      platforms.includes(
+        { typescriptWasm: "typescript", swift: "swift", kotlinJvm: "kotlin", android: "android" }[
+          id
+        ],
+      ),
+    )
+    .map(({ id, name, format, matches, supportingMatches }) => {
+      const matchingArtifacts = artifacts.filter(({ path: artifactPath }) => matches(artifactPath));
+      if (matchingArtifacts.length !== 1) {
         throw new Error(
-          `Release manifest expected exactly one ${id} supporting artifact, found ${supportingArtifacts.length}`,
+          `Release manifest expected exactly one ${id} package, found ${matchingArtifacts.length}`,
         );
       }
-      packageRecord.supportingArtifacts = supportingArtifacts;
-    }
-    return [id, packageRecord];
-  }),
+      const packageRecord = {
+        name,
+        version: releaseVersion,
+        aliasReferenceSchemaVersion,
+        format,
+        artifact: matchingArtifacts[0],
+      };
+      if (supportingMatches) {
+        const supportingArtifacts = artifacts.filter(({ path: artifactPath }) =>
+          supportingMatches(artifactPath),
+        );
+        if (supportingArtifacts.length !== 1) {
+          throw new Error(
+            `Release manifest expected exactly one ${id} supporting artifact, found ${supportingArtifacts.length}`,
+          );
+        }
+        packageRecord.supportingArtifacts = supportingArtifacts;
+      }
+      return [id, packageRecord];
+    }),
 );
 
 const sbomFile = requireFile("SBOM_FILE");
@@ -288,17 +304,16 @@ const manifest = {
     dependencyAudit: auditArtifact,
     acceptedAuditRisks: audit.cargo.acceptedRisks,
     apiReports: Object.fromEntries(
-      ["alias-sdk-typescript", "alias-sdk-swift", "alias-sdk-kotlin", "alias-sdk-android"].map(
-        (directory) => [directory, artifactByPath.get(`artifacts/${directory}/API-REPORT.txt`)],
-      ),
+      platformDirectories.map((directory) => [
+        directory,
+        artifactByPath.get(`artifacts/${directory}/API-REPORT.txt`),
+      ]),
     ),
     reproducibility: Object.fromEntries(
-      ["alias-sdk-typescript", "alias-sdk-swift", "alias-sdk-kotlin", "alias-sdk-android"].map(
-        (directory) => [
-          directory,
-          artifactByPath.get(`artifacts/${directory}/REPRODUCIBILITY.txt`),
-        ],
-      ),
+      platformDirectories.map((directory) => [
+        directory,
+        artifactByPath.get(`artifacts/${directory}/REPRODUCIBILITY.txt`),
+      ]),
     ),
   },
   provenance: {

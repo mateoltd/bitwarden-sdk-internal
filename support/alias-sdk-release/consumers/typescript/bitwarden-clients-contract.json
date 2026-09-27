@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/mateoltd/bitwarden-clients.git",
-  "branch": "integration/public-alias-clients",
-  "commit": "4f6804e8c44b482bece57654afaa23980c71332a",
+  "branch": "integration/alias-clients-launch-20260926",
+  "commit": "018085075bfb18421bb22e7793360a6fd762da1d",
   "node": ">=24.17.0",
   "typescript": "5.9.3",
   "compilerOptions": {
@@ -15,5 +15,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "useDefineForClassFields": false
-  }
+  },
+  "stockSdkVersion": "0.3.0-internal.1051"
 }

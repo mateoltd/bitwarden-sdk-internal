@@ -57,6 +57,7 @@ const alias = (connectionId: string, aliasId: string, address: string): Alias =>
 });
 
 const cipher = (index: number, username: string): CipherView => ({
+  partial: false,
   id: cipherId(index),
   organizationId: undefined,
   folderId: undefined,
