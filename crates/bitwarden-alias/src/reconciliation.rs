@@ -1059,6 +1059,7 @@ mod tests {
             .parse()
             .expect("test timestamp should parse");
         CipherView {
+            partial: false,
             id: Some(CipherId::new_v4()),
             organization_id: None,
             folder_id: None,

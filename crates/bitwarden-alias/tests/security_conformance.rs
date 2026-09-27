@@ -521,6 +521,7 @@ fn cipher_from_fixture(fixture: CipherFixture) -> CipherView {
     let id: CipherId = serde_json::from_str(&format!("\"{}\"", fixture.id))
         .expect("the conformance fixture cipher ID must be a valid UUID");
     CipherView {
+        partial: false,
         id: Some(id),
         organization_id: None,
         folder_id: None,

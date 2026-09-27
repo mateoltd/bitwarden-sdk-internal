@@ -91,7 +91,6 @@ async fn share_ciphers_bulk(
         // Mini responses omit the freshly encrypted outbound blob.
         cipher.data = outbound_data.get(&cipher_id).cloned().flatten();
 
-
         repository.set(require!(cipher.id), cipher.clone()).await?;
         withheld_ids.remove(&cipher_id);
         results.push(cipher)
@@ -781,6 +780,7 @@ mod tests {
             partial_data: None,
             r#type: CipherType::Login,
             login: Some(crate::cipher::Login {
+                alias_reference: None,
                 username: Some("2.EI9Km5BfrIqBa1W+WCccfA==|laWxNnx+9H3MZww4zm7cBSLisjpi81zreaQntRhegVI=|x42+qKFf5ga6DIL0OW5pxCdLrC/gm8CXJvf3UASGteI=".parse().unwrap()),
                 password: Some("2.EI9Km5BfrIqBa1W+WCccfA==|laWxNnx+9H3MZww4zm7cBSLisjpi81zreaQntRhegVI=|x42+qKFf5ga6DIL0OW5pxCdLrC/gm8CXJvf3UASGteI=".parse().unwrap()),
                 password_revision_date: None,

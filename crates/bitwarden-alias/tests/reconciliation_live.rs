@@ -87,6 +87,7 @@ fn login_cipher(id: CipherId, username: String) -> CipherView {
         .parse()
         .expect("test timestamp should parse");
     CipherView {
+        partial: false,
         id: Some(id),
         organization_id: None,
         folder_id: None,

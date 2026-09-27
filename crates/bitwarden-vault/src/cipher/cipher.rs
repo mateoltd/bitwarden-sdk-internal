@@ -1511,6 +1511,7 @@ fn decrypt_restricted_cipher_view(
             password_revision_date: None,
             uris: decrypt_restricted_uris(&restricted, ctx, ciphers_key, strict)?,
             totp: None,
+            alias_reference: None,
             autofill_on_page_load: None,
             fido2_credentials: None,
         })
@@ -2550,6 +2551,7 @@ mod tests {
         assert_eq!(login.username, None);
         assert_eq!(login.password, None);
         assert_eq!(login.totp, None);
+        assert_eq!(login.alias_reference, None);
         assert_eq!(view.notes, None);
         assert!(view.card.is_none());
     }
