@@ -19,6 +19,7 @@ import {
   reduce_alias_journal,
   serialize_alias_reference,
 } from "@bitwarden/sdk-internal";
+import { asCipherId } from "../type-assertion-helpers";
 
 const CONNECTION_ONE = "11111111-1111-4111-8111-111111111111";
 const CONNECTION_TWO = "22222222-2222-4222-8222-222222222222";
@@ -26,7 +27,7 @@ const NOW = "2026-08-11T10:00:00Z";
 
 const sensitive = (value: string): SensitiveString => value as SensitiveString;
 const cipherId = (index: number): CipherId =>
-  `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}` as CipherId;
+  asCipherId(`00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`);
 
 const capabilities: AliasProviderCapabilities = {
   create: true,
