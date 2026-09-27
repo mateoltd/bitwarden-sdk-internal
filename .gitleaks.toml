@@ -1,0 +1,10 @@
+title = "Bitwarden alias SDK secret scanning"
+
+[extend]
+useDefault = true
+
+# These are public, deliberately committed parser fixtures. Keep this allowlist path-scoped so a
+# newly committed key anywhere else still fails the release gate.
+[[allowlists]]
+description = "Public SSH import fixtures"
+paths = ['''^crates/bitwarden-ssh/resources/import/''']

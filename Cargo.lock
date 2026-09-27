@@ -235,8 +235,6 @@ dependencies = [
 [[package]]
 name = "arrayref"
 version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
 
 [[package]]
 name = "arrayvec"
@@ -490,6 +488,33 @@ name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+
+[[package]]
+name = "bitwarden-alias"
+version = "3.0.0"
+dependencies = [
+ "async-trait",
+ "bitwarden-api-base",
+ "bitwarden-core",
+ "bitwarden-sensitive-value",
+ "bitwarden-vault",
+ "http",
+ "js-sys",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror",
+ "tokio",
+ "tsify",
+ "uniffi",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wiremock",
+]
 
 [[package]]
 name = "bitwarden-api-api"
@@ -911,7 +936,6 @@ dependencies = [
 name = "bitwarden-generators"
 version = "3.0.0"
 dependencies = [
- "bitwarden-api-base",
  "bitwarden-core",
  "bitwarden-crypto",
  "bitwarden-error",
@@ -919,7 +943,6 @@ dependencies = [
  "password-rules-parser",
  "rand 0.10.2",
  "rand_chacha 0.10.0",
- "reqwest",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -928,7 +951,6 @@ dependencies = [
  "tsify",
  "uniffi",
  "wasm-bindgen",
- "wiremock",
 ]
 
 [[package]]
@@ -1463,6 +1485,7 @@ name = "bitwarden-uniffi"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitwarden-alias",
  "bitwarden-auth",
  "bitwarden-collections",
  "bitwarden-core",
@@ -1480,6 +1503,7 @@ dependencies = [
  "bitwarden-policies",
  "bitwarden-random",
  "bitwarden-send",
+ "bitwarden-sensitive-value",
  "bitwarden-server-communication-config",
  "bitwarden-ssh",
  "bitwarden-state",
@@ -1490,6 +1514,7 @@ dependencies = [
  "jni",
  "libloading",
  "rustls-platform-verifier",
+ "serde_json",
  "thiserror",
  "tracing",
  "tracing-android",
@@ -1620,6 +1645,7 @@ name = "bitwarden-wasm-internal"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitwarden-alias",
  "bitwarden-commercial-vault",
  "bitwarden-core",
  "bitwarden-crypto",
@@ -1635,6 +1661,7 @@ dependencies = [
  "bitwarden-policies",
  "bitwarden-random",
  "bitwarden-send",
+ "bitwarden-sensitive-value",
  "bitwarden-server-communication-config",
  "bitwarden-shared-unlock",
  "bitwarden-ssh",
@@ -1643,6 +1670,7 @@ dependencies = [
  "bitwarden-user-crypto-management",
  "bitwarden-vault",
  "console_error_panic_hook",
+ "js-sys",
  "rand 0.10.2",
  "rsa",
  "serde",
@@ -5390,9 +5418,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -5453,9 +5481,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",

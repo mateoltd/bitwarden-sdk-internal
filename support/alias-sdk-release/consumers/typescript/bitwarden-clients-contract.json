@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/mateoltd/bitwarden-clients.git",
+  "branch": "integration/alias-clients-launch-20260926",
+  "commit": "018085075bfb18421bb22e7793360a6fd762da1d",
+  "node": ">=24.17.0",
+  "typescript": "5.9.3",
+  "compilerOptions": {
+    "strict": false,
+    "moduleResolution": "bundler",
+    "noImplicitAny": true,
+    "target": "ES2016",
+    "module": "ES2020",
+    "lib": ["es5", "es6", "es7", "dom", "ES2021", "ESNext.Disposable"],
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": false
+  },
+  "stockSdkVersion": "0.2.0-main.1051"
+}

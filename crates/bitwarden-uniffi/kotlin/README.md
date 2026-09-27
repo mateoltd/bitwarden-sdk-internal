@@ -54,3 +54,20 @@ export GITHUB_TOKEN=token
 
 ./gradlew sdk:publish
 ```
+
+The Android SDK is an OSS artifact. `publish-local.sh` checks its resolved Cargo graph before the
+native build and verifies that the resulting AAR contains the GPL license and no commercial-only
+paths or generated APIs. The same package check can be run directly from the repository root:
+
+```bash
+scripts/check-oss-artifact-boundary.sh \
+  --kotlin crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar
+```
+
+The generated Kotlin sources can also be compiled into a host JVM JAR for local consumers. Such a
+JAR depends on JNA and Kotlin coroutines at runtime, and on the Android/AndroidX annotation APIs
+used by the generated cleaner implementation. Verify its package boundary with:
+
+```bash
+scripts/check-oss-artifact-boundary.sh --kotlin-host path/to/bitwarden-sdk-kotlin-host.jar
+```

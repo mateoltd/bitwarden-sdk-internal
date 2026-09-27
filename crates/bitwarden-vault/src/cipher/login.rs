@@ -319,6 +319,8 @@ impl From<&Fido2CredentialView> for Fido2CredentialListView {
 pub struct Login {
     pub username: Option<EncString>,
     pub password: Option<EncString>,
+    /// Canonical alias reference JSON encrypted with the rest of the login.
+    pub alias_reference: Option<EncString>,
     pub password_revision_date: Option<DateTime<Utc>>,
 
     pub uris: Option<Vec<LoginUri>>,
@@ -336,6 +338,8 @@ pub struct Login {
 pub struct LoginView {
     pub username: Option<String>,
     pub password: Option<String>,
+    /// Canonical alias reference JSON. This is persisted only through normal vault encryption.
+    pub alias_reference: Option<String>,
     pub password_revision_date: Option<DateTime<Utc>>,
 
     pub uris: Option<Vec<LoginUriView>>,
@@ -435,6 +439,7 @@ impl CompositeEncryptable<KeySlotIds, SymmetricKeySlotId, Login> for LoginView {
         Ok(Login {
             username: self.username.encrypt(ctx, key)?,
             password: self.password.encrypt(ctx, key)?,
+            alias_reference: self.alias_reference.encrypt(ctx, key)?,
             password_revision_date: self.password_revision_date,
             uris: self.uris.encrypt_composite(ctx, key)?,
             totp: self
@@ -481,6 +486,7 @@ impl Decryptable<KeySlotIds, SymmetricKeySlotId, LoginView> for Login {
         Ok(LoginView {
             username: self.username.decrypt(ctx, key).ok().flatten(),
             password: self.password.decrypt(ctx, key).ok().flatten(),
+            alias_reference: self.alias_reference.decrypt(ctx, key).ok().flatten(),
             password_revision_date: self.password_revision_date,
             uris: self.uris.decrypt(ctx, key).ok().flatten(),
             totp: self.totp.decrypt(ctx, key).ok().flatten(),
@@ -521,6 +527,7 @@ impl Decryptable<KeySlotIds, SymmetricKeySlotId, LoginView> for StrictDecrypt<&L
         Ok(LoginView {
             username: self.0.username.decrypt(ctx, key)?,
             password: self.0.password.decrypt(ctx, key)?,
+            alias_reference: self.0.alias_reference.decrypt(ctx, key)?,
             password_revision_date: self.0.password_revision_date,
             uris: self.0.uris.decrypt(ctx, key)?,
             totp: self.0.totp.decrypt(ctx, key)?,
@@ -604,6 +611,9 @@ impl TryFrom<CipherLoginModel> for Login {
         Ok(Self {
             username: EncString::try_from_optional(login.username)?,
             password: EncString::try_from_optional(login.password)?,
+            // The legacy API model has no first-class alias reference. Blob ciphers carry it
+            // inside their encrypted login payload instead.
+            alias_reference: None,
             password_revision_date: login
                 .password_revision_date
                 .map(|d| d.parse())
@@ -829,6 +839,7 @@ mod tests {
         let login_with_password = Login {
             username: None,
             password: Some("2.38t4E88QbQEkBdK+oZNHFg==|B3BiDcG3ZfEkD2BK+FMytQ==|2Dw1/f+LCfkCmCj4gKOxOu6CRnZj93qaBYUqbzy/reU=".parse().unwrap()),
+            alias_reference: None,
             password_revision_date: None,
             uris: None,
             totp: None,
@@ -845,6 +856,7 @@ mod tests {
         let login_with_username = Login {
             username: Some("2.38t4E88QbQEkBdK+oZNHFg==|B3BiDcG3ZfEkD2BK+FMytQ==|2Dw1/f+LCfkCmCj4gKOxOu6CRnZj93qaBYUqbzy/reU=".parse().unwrap()),
             password: None,
+            alias_reference: None,
             password_revision_date: None,
             uris: None,
             totp: None,
@@ -861,6 +873,7 @@ mod tests {
         let login = Login {
             username: Some("2.38t4E88QbQEkBdK+oZNHFg==|B3BiDcG3ZfEkD2BK+FMytQ==|2Dw1/f+LCfkCmCj4gKOxOu6CRnZj93qaBYUqbzy/reU=".parse().unwrap()),
             password: Some("2.38t4E88QbQEkBdK+oZNHFg==|B3BiDcG3ZfEkD2BK+FMytQ==|2Dw1/f+LCfkCmCj4gKOxOu6CRnZj93qaBYUqbzy/reU=".parse().unwrap()),
+            alias_reference: None,
             password_revision_date: None,
             uris: None,
             totp: Some("2.38t4E88QbQEkBdK+oZNHFg==|B3BiDcG3ZfEkD2BK+FMytQ==|2Dw1/f+LCfkCmCj4gKOxOu6CRnZj93qaBYUqbzy/reU=".parse().unwrap()),

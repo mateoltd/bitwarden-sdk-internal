@@ -61,6 +61,9 @@ jobs:
       - name: Check cargo-binstall is not configured
         run: ./scripts/check-no-binstall.sh
 
+      - name: Verify OSS artifact dependency boundary
+        run: ./scripts/check-oss-artifact-boundary.sh
+
       - name: Build
         env:
           TARGET: ${{ matrix.settings.target }}
@@ -125,10 +128,10 @@ jobs:
         working-directory: crates/bitwarden-uniffi/kotlin/sdk/src/main/jniLibs
         run: |
           mkdir armeabi-v7a arm64-v8a x86 x86_64
-          mv /home/runner/work/sdk-internal/sdk-internal/android-armv7-linux-androideabi/libbitwarden_uniffi.so ./armeabi-v7a/libbitwarden_uniffi.so
-          mv /home/runner/work/sdk-internal/sdk-internal/android-aarch64-linux-android/libbitwarden_uniffi.so ./arm64-v8a/libbitwarden_uniffi.so
-          mv /home/runner/work/sdk-internal/sdk-internal/android-i686-linux-android/libbitwarden_uniffi.so ./x86/libbitwarden_uniffi.so
-          mv /home/runner/work/sdk-internal/sdk-internal/android-x86_64-linux-android/libbitwarden_uniffi.so ./x86_64/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-armv7-linux-androideabi/libbitwarden_uniffi.so" ./armeabi-v7a/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-aarch64-linux-android/libbitwarden_uniffi.so" ./arm64-v8a/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-i686-linux-android/libbitwarden_uniffi.so" ./x86/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-x86_64-linux-android/libbitwarden_uniffi.so" ./x86_64/libbitwarden_uniffi.so
 
       - name: Generate bindings
         working-directory: crates/bitwarden-uniffi/kotlin
@@ -141,6 +144,11 @@ jobs:
         working-directory: crates/bitwarden-uniffi/kotlin
         run: |
           ./gradlew build --warning-mode all --stacktrace
+
+      - name: Verify OSS Android package contents
+        run: |
+          ./scripts/check-oss-artifact-boundary.sh \
+            --kotlin crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar
 
       - name: Publish
         id: publish

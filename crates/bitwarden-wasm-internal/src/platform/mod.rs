@@ -1,6 +1,6 @@
 use bitwarden_core::Client;
 use serde::{Deserialize, Serialize};
-use tsify::Tsify;
+use tsify_macros::Tsify;
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
 use crate::platform::repository::create_wasm_repositories;
