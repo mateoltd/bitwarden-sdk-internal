@@ -1,6 +1,7 @@
 // Required by frozen clients 018085075bfb18421bb22e7793360a6fd762da1d (.1051 API).
 import {
   Fido2CredentialFullView,
+  IpcClient,
   ManagedSettingsClient,
   ManagementProfile,
   PasswordManagerClient,
@@ -27,13 +28,14 @@ export function currentClients(
   client: PasswordManagerClient,
   profile: ManagementProfile,
   driver: SharedUnlockDriver,
+  ipc: IpcClient,
   userId: UserId,
   key: SymmetricKey,
 ) {
   const managed = new ManagedSettingsClient();
   managed.update_profile(profile);
   const policies: PolicyClient = client.policies();
-  const peer = new SharedUnlockPeer("Browser", driver);
+  const peer = new SharedUnlockPeer(ipc, driver);
   const unlock: Promise<void> = driver.unlock_user(userId, key);
   return { managed, policies, peer, unlock, sends: client.sends(), version: SendEncryptionType.V1 };
 }

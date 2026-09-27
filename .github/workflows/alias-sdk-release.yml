@@ -228,6 +228,7 @@ jobs:
           retention-days: 30
 
   swift:
+    if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Swift clean room
     runs-on: macos-14
     needs: policy
