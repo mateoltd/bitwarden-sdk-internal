@@ -766,8 +766,8 @@ jobs:
       - name: Download candidate artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: alias-sdk-typescript
-          path: ${{ runner.temp }}/candidate/artifacts
+          name: alias-sdk-typescript
+          path: ${{ runner.temp }}/candidate/artifacts/alias-sdk-typescript
 
       - name: Download dependency audit evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
