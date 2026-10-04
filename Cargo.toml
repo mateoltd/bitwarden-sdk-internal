@@ -2,7 +2,12 @@
 resolver = "2"
 members = ["bitwarden_license/*", "crates/*"]
 default-members = ["crates/*"]
-exclude = ["support/lints", "support/vendor/rsa", "support/vendor/crypto-bigint", "support/rsa-division-probe"]
+exclude = [
+    "support/lints",
+    "support/rsa-division-probe",
+    "support/vendor/crypto-bigint",
+    "support/vendor/rsa",
+]
 
 # Global settings for all crates should be defined here
 [workspace.package]
