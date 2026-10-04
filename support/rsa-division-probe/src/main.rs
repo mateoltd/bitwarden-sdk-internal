@@ -11,7 +11,7 @@ unsafe extern "C" {
 const MODULUS: &[u8; 256] = include_bytes!("public-modulus.bin");
 
 macro_rules! check_reduction {
-    ($integer:ident, $high:expr) => {{
+    ($integer:ident, $high:expr, $vartime:expr) => {{
         let modulus =
             $integer::NonZero::new($integer::BoxedUint::from_be_slice(MODULUS, 2048).unwrap())
                 .unwrap();
@@ -26,7 +26,11 @@ macro_rules! check_reduction {
         let words = value.as_mut_words();
         // Test-only taint starts after public key/input construction. Mark every recovered limb.
         unsafe { mark_secret(words.as_mut_ptr().cast(), std::mem::size_of_val(words)) };
-        let mut output = black_box(value.rem_vartime(&modulus));
+        let mut output = black_box(if $vartime {
+            value.rem_vartime(&modulus)
+        } else {
+            value.rem(&modulus)
+        });
         let words = output.as_mut_words();
         // The arithmetic result is checked after explicitly authorizing this probe's output.
         unsafe { release_output(words.as_mut_ptr().cast(), std::mem::size_of_val(words)) };
@@ -37,18 +41,31 @@ macro_rules! check_reduction {
 fn main() {
     assert_ne!(unsafe { property_running() }, 0, "requires Valgrind");
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 3, "expected original/candidate and zero/high");
+    assert_eq!(
+        args.len(),
+        4,
+        "expected original/candidate, zero/high and rem/rem-vartime"
+    );
     let high = match args[2].as_str() {
         "zero" => false,
         "high" => true,
         _ => panic!("unknown representative"),
     };
+    let vartime = match args[3].as_str() {
+        "rem" => false,
+        "rem-vartime" => true,
+        _ => panic!("unknown reduction"),
+    };
     match args[1].as_str() {
-        "original" => check_reduction!(original_bigint, high),
-        "candidate" => check_reduction!(candidate_bigint, high),
+        "original" => check_reduction!(original_bigint, high, vartime),
+        "candidate" => check_reduction!(candidate_bigint, high, vartime),
         _ => panic!("unknown implementation"),
     }
-    println!("{} {}: {} property errors", args[1], args[2], unsafe {
-        property_errors()
-    });
+    println!(
+        "{} {} {}: {} property errors",
+        args[1],
+        args[2],
+        args[3],
+        unsafe { property_errors() }
+    );
 }

@@ -9,14 +9,17 @@ trap 'rm -rf "$probe_target"' EXIT
 for profile in release speed; do
   CARGO_TARGET_DIR="$probe_target" cargo build --manifest-path "$manifest" --locked --profile "$profile"
   binary="$probe_target/$profile/rsa-division-probe"
-  for value in zero high; do
-    # The actual original dependency must expose the property, calibrating the detector.
-    original_status=0
-    valgrind --tool=memcheck --error-exitcode=77 "$binary" original "$value" || original_status=$?
-    if [[ "$original_status" != 77 ]]; then
-      echo "Original division control did not expose the secret-dependent operation" >&2
-      exit 1
-    fi
-    valgrind --tool=memcheck --error-exitcode=77 "$binary" candidate "$value"
+  for reduction in rem rem-vartime; do
+    for value in zero high; do
+      for implementation in original candidate; do
+        prefix="$probe_target/$profile-$reduction-$value-$implementation"
+        status=0
+        valgrind --tool=memcheck --xml=yes --xml-file="$prefix.xml" --error-exitcode=77 \
+          "$binary" "$implementation" "$value" "$reduction" >"$prefix.stdout" || status=$?
+        cat "$prefix.stdout"
+        python3 scripts/alias-sdk/check-rsa-division.py \
+          "$implementation" "$value" "$reduction" "$status" "$prefix.xml" "$prefix.stdout"
+      done
+    done
   done
 done
