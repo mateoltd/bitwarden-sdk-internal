@@ -120,7 +120,7 @@ jobs:
           SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
-          scripts/check-oss-artifact-boundary.sh --wasm crates/bitwarden-wasm-internal/npm
+          scripts/check-oss-artifact-boundary.sh --wasm "$GITHUB_WORKSPACE/crates/bitwarden-wasm-internal/npm"
           mkdir "$RUNNER_TEMP/fork-sdk-oss"
           (cd crates/bitwarden-wasm-internal/npm && npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/fork-sdk-oss")
           mv "$RUNNER_TEMP/fork-sdk-oss/"*.tgz "$RUNNER_TEMP/fork-sdk-oss/sdk.tgz"
