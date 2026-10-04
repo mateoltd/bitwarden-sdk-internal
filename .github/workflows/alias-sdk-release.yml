@@ -95,9 +95,8 @@ jobs:
         run: formal/alias-security/check.sh
 
   assurance:
-    name: Dependency audit evidence
+    name: Source-bound dependency evidence
     runs-on: ubuntu-24.04
-    needs: policy
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -118,27 +117,14 @@ jobs:
       - name: Install pinned Cargo audit tool
         run: cargo install cargo-audit --locked --version 0.22.2
 
-      - name: Audit locked Rust and JavaScript graphs
-        run: |
-          mkdir -p "$RUNNER_TEMP/alias-sdk-assurance"
-          scripts/alias-sdk/create-cargo-package-list.sh "$RUNNER_TEMP/cargo-active.txt"
-          set +e
-          cargo audit --json >"$RUNNER_TEMP/cargo-audit.json"
-          cargo_audit_exit=$?
-          npm audit --json >"$RUNNER_TEMP/npm-audit.json"
-          npm_audit_exit=$?
-          set -e
-          printf 'cargo-audit-exit=%s\nnpm-audit-exit=%s\n' \
-            "$cargo_audit_exit" "$npm_audit_exit" \
-            >"$RUNNER_TEMP/alias-sdk-assurance/AUDIT-TOOL-STATUS.txt"
-          scripts/alias-sdk/create-audit-report.mjs \
-            "$RUNNER_TEMP/cargo-audit.json" \
-            "$RUNNER_TEMP/npm-audit.json" \
-            "$RUNNER_TEMP/cargo-active.txt" \
-            "support/alias-sdk-release/audit-policy.json" \
-            "$RUNNER_TEMP/alias-sdk-assurance/AUDIT-REPORT.json"
+      - name: Test source-bound remediation contract
+        run: python3 -m unittest discover -s scripts/alias-sdk -p 'test_rsa_remediation.py' -v
+
+      - name: Collect independent audit evidence without qualifying artifacts
+        run: scripts/alias-sdk/collect-audit-evidence.sh "$RUNNER_TEMP/alias-sdk-assurance"
 
       - name: Upload dependency audit evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: alias-sdk-assurance
@@ -149,7 +135,6 @@ jobs:
   wasm:
     name: TypeScript and WASM clean room
     runs-on: ubuntu-24.04
-    needs: policy
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -218,6 +203,19 @@ jobs:
             rustc --version
             ./node_modules/.bin/wasm-opt --version
           } >"$RUNNER_TEMP/alias-sdk-typescript/BUILD-ENVIRONMENT.txt"
+
+      - name: Mark package delivery as build-only
+        run: |
+          python3 scripts/alias-sdk/rsa-remediation.py source \
+            --output "$RUNNER_TEMP/alias-sdk-typescript/SOURCE-REMEDIATION.json"
+          python3 - "$RUNNER_TEMP/alias-sdk-typescript" <<'PY'
+          import json, pathlib, subprocess, sys
+          directory = pathlib.Path(sys.argv[1])
+          record = {"schemaVersion": 1, "securityQualified": False,
+                    "purpose": "build-only-unqualified",
+                    "sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()}
+          (directory / "QUALIFICATION-STATUS.json").write_text(json.dumps(record, indent=2) + "\n")
+          PY
 
       - name: Upload TypeScript artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -627,7 +625,7 @@ jobs:
     if: github.ref != 'refs/heads/integration/alias-sdk-launch-20260926' && github.head_ref != 'integration/alias-sdk-launch-20260926'
     name: Assemble checksummed candidate
     runs-on: ubuntu-24.04
-    needs: [assurance, wasm, swift, kotlin, android, simplelogin]
+    needs: [policy, assurance, wasm, swift, kotlin, android, simplelogin]
     permissions:
       contents: read
       id-token: write
@@ -741,7 +739,7 @@ jobs:
     if: github.ref == 'refs/heads/integration/alias-sdk-launch-20260926' || github.head_ref == 'integration/alias-sdk-launch-20260926'
     name: Assemble checksummed JavaScript candidate
     runs-on: ubuntu-24.04
-    needs: [assurance, wasm]
+    needs: [policy, assurance, wasm]
     permissions:
       contents: read
       id-token: write

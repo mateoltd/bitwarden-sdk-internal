@@ -3,6 +3,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const [artifactDirectory, outputDirectory] = process.argv.slice(2);
 if (!artifactDirectory || !outputDirectory) {
@@ -255,10 +257,35 @@ if (sbom.bomFormat !== "CycloneDX" || sbom.specVersion !== "1.6") {
 const auditPath = "artifacts/alias-sdk-assurance/AUDIT-REPORT.json";
 const auditArtifact = artifactByPath.get(auditPath);
 if (!auditArtifact) throw new Error(`${auditPath} is missing`);
-const audit = readJson(path.join(artifactDirectory, "alias-sdk-assurance/AUDIT-REPORT.json"));
+// Audit collection is deliberately build-only. Qualify the delivered bytes before
+// constructing a candidate, rather than treating a path dependency omission as a fix.
+const qualificationFile = path.join(outputDirectory, "OAEP-QUALIFICATION.json");
+const contract = spawnSync(
+  "python3",
+  [
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "rsa-remediation.py"),
+    "qualify",
+    "--input",
+    artifactDirectory,
+    "--platforms",
+    platforms.join(","),
+    "--commit",
+    sourceCommit,
+    "--output",
+    qualificationFile,
+  ],
+  { stdio: "inherit" },
+);
+if (contract.error) throw contract.error;
+if (contract.status !== 0) throw new Error("Delivered SDK OAEP qualification failed");
+const audit = readJson(qualificationFile);
 if (
+  audit.schemaVersion !== 2 ||
+  audit.securityQualified !== true ||
+  audit.sourceRemediation?.disposition !== "SDK_OAEP_EXACT_BYTES_REMEDIATED" ||
   audit.cargo?.unacceptedVulnerabilityCount !== 0 ||
   !Array.isArray(audit.cargo?.acceptedRisks) ||
+  audit.cargo.acceptedRisks.length !== 0 ||
   audit.npm?.vulnerabilities?.total !== 0
 ) {
   throw new Error("Dependency audit evidence has unaccepted or malformed findings");
@@ -302,6 +329,11 @@ const manifest = {
   evidence: {
     sbom: sbomArtifact,
     dependencyAudit: auditArtifact,
+    scopedOaepQualification: {
+      path: "OAEP-QUALIFICATION.json",
+      sha256: crypto.createHash("sha256").update(fs.readFileSync(qualificationFile)).digest("hex"),
+      bytes: fs.statSync(qualificationFile).size,
+    },
     acceptedAuditRisks: audit.cargo.acceptedRisks,
     apiReports: Object.fromEntries(
       platformDirectories.map((directory) => [
@@ -343,7 +375,7 @@ fs.writeFileSync(
 );
 fs.writeFileSync(
   path.join(outputDirectory, "SHA256SUMS"),
-  `${[...artifacts, sbomArtifact]
+  `${[...artifacts, sbomArtifact, manifest.evidence.scopedOaepQualification]
     .map(({ sha256, path: artifactPath }) => `${sha256}  ${artifactPath}`)
     .join("\n")}\n`,
 );

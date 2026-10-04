@@ -12,7 +12,7 @@ fail() {
     exit 1
 }
 
-for required_file in handoff-manifest.json SHA256SUMS SBOM.cdx.json; do
+for required_file in handoff-manifest.json SHA256SUMS SBOM.cdx.json OAEP-QUALIFICATION.json; do
     [[ -f "$candidate_directory/$required_file" ]] || fail "missing $required_file"
 done
 
@@ -47,13 +47,27 @@ node -e '
   const root = process.argv[1];
   const manifest = JSON.parse(fs.readFileSync(`${root}/handoff-manifest.json`, "utf8"));
   const audit = JSON.parse(
-    fs.readFileSync(`${root}/artifacts/alias-sdk-assurance/AUDIT-REPORT.json`, "utf8"),
+    fs.readFileSync(`${root}/OAEP-QUALIFICATION.json`, "utf8"),
   );
   if (manifest.releaseChannel !== "unreleased-prerelease") process.exit(1);
   if (Object.values(manifest.candidatePolicy ?? {}).some(Boolean)) process.exit(1);
+  if (audit.schemaVersion !== 2 || audit.securityQualified !== true) process.exit(1);
+  if (audit.sourceRemediation?.disposition !== "SDK_OAEP_EXACT_BYTES_REMEDIATED") process.exit(1);
   if (audit.cargo?.unacceptedVulnerabilityCount !== 0) process.exit(1);
   if (!Array.isArray(audit.cargo?.acceptedRisks)) process.exit(1);
+  if (audit.cargo.acceptedRisks.length !== 0) process.exit(1);
   if (audit.npm?.vulnerabilities?.total !== 0) process.exit(1);
 ' "$candidate_directory" || fail "candidate policy or dependency audit evidence is invalid"
+
+qualification_check="$(mktemp)"
+trap 'rm -f "$qualification_check"' EXIT
+platforms="$(node -e 'console.log(Object.keys(require(process.argv[1]).packages).map(x => ({typescriptWasm:"typescript",kotlinJvm:"kotlin"}[x] ?? x)).join(","))' "$candidate_directory/handoff-manifest.json")"
+source_commit="$(node -e 'console.log(require(process.argv[1]).sourceCommit)' "$candidate_directory/handoff-manifest.json")"
+python3 "$(dirname "${BASH_SOURCE[0]}")/rsa-remediation.py" qualify \
+    --input "$candidate_directory/artifacts" --platforms "$platforms" \
+    --commit "$source_commit" --output "$qualification_check" \
+    || fail "delivered OAEP source, advisory or runtime contract changed"
+cmp "$qualification_check" "$candidate_directory/OAEP-QUALIFICATION.json" \
+    || fail "qualification report does not match actual delivered evidence"
 
 echo "Alias SDK candidate evidence is provider-neutral, path-clean, audited, and candidate-only"

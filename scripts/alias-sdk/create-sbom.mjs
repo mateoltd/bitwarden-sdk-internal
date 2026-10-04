@@ -71,6 +71,26 @@ const cargoComponents = [...selectedCargoIds]
     };
     if (pkg.license) component.licenses = [{ expression: pkg.license }];
     if (pkg.repository) component.externalReferences = [{ type: "vcs", url: pkg.repository }];
+    if (
+      (pkg.name === "rsa" && pkg.version === "0.10.0-rc.18") ||
+      (pkg.name === "crypto-bigint" && pkg.version === "0.7.5")
+    ) {
+      // Cargo metadata identifies the actual resolved path. Do not substitute a
+      // registry identity or a synthetic fixed version in the SBOM.
+      const lineageFile = path.join(path.dirname(pkg.manifest_path), "SOURCE.json");
+      const lineageBytes = fs.readFileSync(lineageFile);
+      const lineage = JSON.parse(lineageBytes);
+      if (pkg.source !== null || lineage.package !== pkg.name || lineage.version !== pkg.version) {
+        throw new Error("Patched RSA dependency lineage does not match Cargo metadata");
+      }
+      component.properties.push(
+        { name: "bitwarden:rsa:advisory", value: "RUSTSEC-2023-0071" },
+        { name: "bitwarden:rsa:global-rustsec-closure", value: "false" },
+        { name: "bitwarden:patch:provenance-sha256", value: sha256(lineageBytes) },
+        { name: "bitwarden:patch:original-archive-sha256", value: lineage.originalRegistrySha256 },
+        { name: "bitwarden:patch:original-commit", value: lineage.originalCommit },
+      );
+    }
     return component;
   });
 

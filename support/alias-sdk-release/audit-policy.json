@@ -1,16 +1,70 @@
 {
-  "schemaVersion": 1,
-  "exceptions": [
-    {
-      "advisoryId": "RUSTSEC-2023-0071",
+  "exceptions": [],
+  "oaepRemediation": {
+    "advisoryId": "RUSTSEC-2023-0071",
+    "approvedDeliveries": [],
+    "genericPkcs1v15Qualified": false,
+    "lineage": {
+      "crypto-bigint": {
+        "originalCommit": "2b54d248cce00457e3afb5650d9b14632ef4a116",
+        "originalRegistrySha256": "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271",
+        "package": "crypto-bigint",
+        "provenanceSha256": "cf7f95c3fde9ffd4e15b133daa7328ab35e1a7fb62646e2f771795b83827fedc",
+        "version": "0.7.5"
+      },
+      "rsa": {
+        "originalCommit": "e31a0209de98cce82de44a5efc241912eb38f6ea",
+        "originalRegistrySha256": "30b2aa4ba0d89f73d1e332df05be0eeab8840351c36ca5654341dfdb57bb3caf",
+        "package": "rsa",
+        "provenanceSha256": "e7a338d0766164287e5e5f2c1c5d1e15ac60ed80365b965c8724d889cdad86cd",
+        "version": "0.10.0-rc.18"
+      }
+    },
+    "originalAdvisory": {
+      "aliases": ["CVE-2023-49092", "GHSA-c38w-74pg-36hr", "GHSA-4grx-2x9w-596c"],
+      "categories": ["crypto-failure"],
+      "collection": "crates",
+      "cvss": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "date": "2023-11-22",
+      "description": "### Impact\nDue to a non-constant-time implementation, information about the private key is leaked through timing information which is observable over the network. An attacker may be able to use that information to recover the key.\n\n### Patches\nNo patch is yet available. The crypto-bigint migration ([RustCrypto/RSA#394](https://github.com/RustCrypto/RSA/pull/394)) did not close this. Tracking is [RustCrypto/RSA#626](https://github.com/RustCrypto/RSA/issues/626) (padding still not constant-time). Implicit rejection work is in [RustCrypto/RSA#680](https://github.com/RustCrypto/RSA/pull/680); default-path blinding is in [RustCrypto/RSA#702](https://github.com/RustCrypto/RSA/pull/702).\n\nStill affected as of 2026-09-12: rsa 0.9.10 (latest stable) and rsa 0.10.0-rc.18 (latest). `patched = []` is intentional.\n\n### Workarounds\nAvoid using the `rsa` crate in settings where attackers can observe timing, for example over the network. Local use on a non-compromised computer is fine.\n\n### References\nThis vulnerability was discovered as part of the \"[Marvin Attack]\", which revealed several implementations of RSA including OpenSSL had not properly mitigated timing sidechannel attacks.\n\n[Marvin Attack]: https://people.redhat.com/~hkario/marvin/",
+      "expect-deleted": false,
+      "id": "RUSTSEC-2023-0071",
+      "informational": null,
+      "keywords": ["cryptography"],
+      "license": "CC0-1.0",
       "package": "rsa",
-      "version": "0.10.0-rc.18",
-      "dependencyPath": "bitwarden-crypto -> rsa",
-      "reviewedOn": "2026-08-14",
-      "expiresOn": "2026-10-01",
-      "riskOwner": "SDK Security Engineering",
-      "rationale": "RustSec lists no patched rsa release. Alias operations do not invoke RSA private-key operations, and SDK private-key operations execute on the local client without an alias-provider timing oracle.",
-      "limitation": "This exception does not cover a consumer that exposes SDK RSA private-key timing to a remote observer. Replace or re-assess the dependency before this date or when a constant-time release becomes available."
+      "references": [
+        "https://github.com/RustCrypto/RSA/issues/19#issuecomment-1822995643",
+        "https://people.redhat.com/~hkario/marvin/",
+        "https://github.com/RustCrypto/RSA/pull/394",
+        "https://github.com/RustCrypto/RSA/pull/680",
+        "https://github.com/RustCrypto/RSA/pull/702"
+      ],
+      "related": [],
+      "source": null,
+      "title": "Marvin Attack: potential key recovery through timing sidechannels",
+      "url": "https://github.com/RustCrypto/RSA/issues/626",
+      "withdrawn": null
+    },
+    "packages": {
+      "crypto-bigint": "0.7.5",
+      "rsa": "0.10.0-rc.18"
+    },
+    "scope": [
+      "shared-key legacy3/4/5/6 SHA1/SHA256",
+      "PureCrypto PKCS8/raw SHA1",
+      "1Password importer SHA1/SHA256"
+    ],
+    "sourceCatalog": {
+      "algorithm": "sha256(sorted-sha256-path-lines)",
+      "fileCount": 2320,
+      "sha256": "bd7635f345c6e8529e822e96414a864ea5157b867d3f521b4e9bcdc8af95fec5"
+    },
+    "privateCallers": {
+      "crates/bitwarden-crypto/src/enc_string/asymmetric.rs": "2458b9a452ba5257bee3196c9a2ad46a6d2fc06db2f2558e40e9bc1b01b409f1",
+      "crates/bitwarden-wasm-internal/src/pure_crypto.rs": "9b5c5630fa34973ae504e6549b33eeb6c1a1e83a070c3076b9c11f1840fda6d4",
+      "crates/bitwarden-importers/src/importers/onepassword/access/rsa.rs": "2ede253b33a47cbadb95443b3330ecc634ed5581ee2bd7b839752f60c96656b4"
     }
-  ]
+  },
+  "schemaVersion": 2
 }

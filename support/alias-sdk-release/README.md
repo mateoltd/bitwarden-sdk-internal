@@ -65,15 +65,15 @@ itself prove bit-identical output across different OS or toolchain versions. Car
 use their current upstream advisory databases at workflow runtime, so an older candidate's audit
 report is historical evidence, not a substitute for re-auditing before integration.
 
-The current Cargo graph has one unresolved active finding: `RUSTSEC-2023-0071` in `rsa 0.10.0-rc.18`
-through `bitwarden-crypto -> rsa`. RustSec provides no patched release. Alias lifecycle operations
-do not call RSA private-key operations, but the shared SDK includes RSA key decapsulation and the
-WASM PureCrypto RSA primitive. Consumer exposure must be assessed at those boundaries; a practical
-remote timing oracle has not been established here. The previous narrow exception expired on
-2026-10-01. It is not current risk acceptance, and CI rejects it. A new documented, time-bounded
-security-owner decision is a possible disposition, not an existing approval. No policy renewal or
-cryptographic remediation is implied by this document. The machine-readable policy remains
-`audit-policy.json`.
+The original `rsa 0.10.0-rc.18` identity remains affected by `RUSTSEC-2023-0071`. The source-bound
+downstream OAEP contract authenticates vendored RSA/integer bytes and separately audits original
+registry identities, retaining the original advisory and raw reports. It does not interpret
+cargo-audit's path-dependency omission as a fix. The expired exception is replaced by this technical
+contract, with no accepted risk or claimed fixed upstream release. Source verification alone cannot
+qualify delivered packages. See [OAEP_REMEDIATION.md](OAEP_REMEDIATION.md) for the source, audit,
+delivered-code, binding/runtime and provenance gates. The delivery catalog currently contains no
+qualified artifact. Build-only collection proceeds independently; final assembly still requires the
+unchanged scanner/policy gate and all relevant candidate obligations.
 
 The workflow is candidate-only. It never publishes a registry package, creates a Git tag, creates a
 GitHub release, opens a pull request, or pushes a branch. Pull-request runs produce unsigned preview
