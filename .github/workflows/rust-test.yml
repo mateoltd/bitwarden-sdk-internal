@@ -20,10 +20,36 @@ jobs:
     runs-on: ubuntu-24.04
     needs:
       - formal-alias-security
+      - rsa-oaep-boundary
       - test
     steps:
       - name: Check if tests passed
         run: exit 0
+
+  rsa-oaep-boundary:
+    name: RSA OAEP boundary / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macOS-14, windows-2022]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.98.0"
+      - name: Install Python
+        # tomllib is part of Python 3.11 and newer on all matrix hosts.
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Verify exact dependency and OAEP boundary
+        shell: bash
+        run: bash scripts/alias-sdk/test-rsa-oaep.sh
 
   test:
     name: ${{ matrix.os }} / default
