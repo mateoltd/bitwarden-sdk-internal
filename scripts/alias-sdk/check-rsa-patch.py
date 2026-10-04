@@ -13,7 +13,7 @@ assert source["originalRegistrySha256"] == "30b2aa4ba0d89f73d1e332df05be0eeab884
 assert source["originalCommit"] == "e31a0209de98cce82de44a5efc241912eb38f6ea"
 assert source["advisory"] == "RUSTSEC-2023-0071"
 actual = {
-    str(file.relative_to(vendor)): hashlib.sha256(file.read_bytes()).hexdigest()
+    file.relative_to(vendor).as_posix(): hashlib.sha256(file.read_bytes()).hexdigest()
     for file in vendor.rglob("*") if file.is_file() and file.name != "SOURCE.json"
 }
 assert actual == source["patchedFiles"], "RSA candidate file set or checksum mismatch"
