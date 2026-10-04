@@ -1,13 +1,44 @@
 //! Provider-neutral conformance checks through the exported UniFFI API surface.
 
-use bitwarden_alias::{ALIAS_CONTRACT_VERSION, AliasIdentity};
+use bitwarden_alias::{ALIAS_CONTRACT_VERSION, AliasError, AliasIdentity, AliasJournal};
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use bitwarden_uniffi::alias::{
-    create_alias_reference, parse_alias_reference, serialize_alias_reference,
+    canonicalize_alias_journal, create_alias_reference, merge_alias_journals,
+    parse_alias_reference, serialize_alias_reference,
 };
 use serde_json::Value;
 
 const VECTORS: &str = include_str!("../../../formal/alias-security/conformance-vectors.json");
+
+#[test]
+fn journal_merge_rejects_conflicts_through_the_exported_api() {
+    let vectors: Value = serde_json::from_str(VECTORS).unwrap();
+    let vector = &vectors["journalMergeVectors"][0];
+    let left: AliasJournal = serde_json::from_value(serde_json::json!({
+        "version": 1,
+        "connectionId": vector["connectionId"],
+        "events": vector["leftEvents"],
+    }))
+    .unwrap();
+    let mut right = left.clone();
+    right.events[0].event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3".to_owned();
+    let mut changed_target = right.clone();
+    changed_target.events[0].replica_id = "cccccccc-cccc-4ccc-8ccc-ccccccccccc2".to_owned();
+    changed_target.events[0].target.as_mut().unwrap().alias_id = "another-resource".to_owned();
+
+    for right in [right, changed_target] {
+        canonicalize_alias_journal(left.clone()).unwrap();
+        canonicalize_alias_journal(right.clone()).unwrap();
+        assert!(matches!(
+            merge_alias_journals(left.clone(), right.clone()),
+            Err(AliasError::SyncConflict)
+        ));
+        assert!(matches!(
+            merge_alias_journals(right, left.clone()),
+            Err(AliasError::SyncConflict)
+        ));
+    }
+}
 
 #[test]
 fn provider_neutral_reference_security_conformance() {

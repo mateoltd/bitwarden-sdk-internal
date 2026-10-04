@@ -75,6 +75,7 @@ impl AliasReference {
 
     /// Reconstructs and validates the provider-neutral alias identity.
     pub fn identity(&self) -> Result<AliasIdentity, AliasReferenceError> {
+        self.validate()?;
         AliasIdentity::new(
             self.connection_id.clone(),
             self.alias_id.clone(),
@@ -999,31 +1000,40 @@ fn summarize(
     summary
 }
 
-fn outcome_sort_key(outcome: &AliasReconciliationOutcome) -> (u8, String, String) {
+fn outcome_sort_key(outcome: &AliasReconciliationOutcome) -> (u8, String, String, u8) {
     match outcome {
         AliasReconciliationOutcome::Matched {
             alias_id,
             cipher_id,
-        } => (0, alias_id.clone(), cipher_id.to_string()),
+        } => (0, alias_id.clone(), cipher_id.to_string(), 0),
         AliasReconciliationOutcome::StaleBinding {
             alias_id,
             cipher_id,
             ..
-        } => (1, alias_id.clone(), cipher_id.to_string()),
+        } => (1, alias_id.clone(), cipher_id.to_string(), 0),
         AliasReconciliationOutcome::DuplicateBinding { alias_id, .. } => {
-            (2, alias_id.clone(), String::new())
+            (2, alias_id.clone(), String::new(), 0)
         }
         AliasReconciliationOutcome::MissingAlias {
             alias_id,
             cipher_id,
-        } => (3, alias_id.clone(), cipher_id.to_string()),
+        } => (3, alias_id.clone(), cipher_id.to_string(), 0),
         AliasReconciliationOutcome::UnboundAlias { alias_id } => {
-            (4, alias_id.clone(), String::new())
+            (4, alias_id.clone(), String::new(), 0)
         }
-        AliasReconciliationOutcome::SkippedCipher { cipher_id, .. } => (
+        AliasReconciliationOutcome::SkippedCipher { cipher_id, reason } => (
             5,
             String::new(),
             cipher_id.map_or_else(String::new, |id| id.to_string()),
+            match reason {
+                AliasReconciliationSkipReason::MissingCipherId => 0,
+                AliasReconciliationSkipReason::ReferenceTooLarge => 1,
+                AliasReconciliationSkipReason::MalformedReference => 2,
+                AliasReconciliationSkipReason::UnsupportedReferenceVersion => 3,
+                AliasReconciliationSkipReason::ForeignConnection => 4,
+                AliasReconciliationSkipReason::NonLoginCipher => 5,
+                AliasReconciliationSkipReason::InvalidReferenceValue => 6,
+            },
         ),
     }
 }
@@ -1119,6 +1129,40 @@ mod tests {
                 .identity()
                 .unwrap(),
             identity
+        );
+    }
+
+    #[test]
+    fn identity_rejects_unsupported_or_noncanonical_references() {
+        let mut reference =
+            AliasReference::new(&alias("opaque-A", "alias@example.test").identity).unwrap();
+        reference.version = ALIAS_REFERENCE_VERSION + 1;
+        assert!(matches!(
+            reference.identity(),
+            Err(AliasReferenceError::UnsupportedVersion)
+        ));
+        reference.version = ALIAS_REFERENCE_VERSION;
+        reference.address = SensitiveString::from(" Alias@Example.Test ");
+        assert!(matches!(
+            reference.identity(),
+            Err(AliasReferenceError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn skipped_ciphers_without_ids_have_deterministic_order() {
+        let mut malformed = login("alias@example.test");
+        malformed.id = None;
+        malformed.login.as_mut().unwrap().alias_reference = Some("not-json".to_owned());
+        let mut unsupported = login("alias@example.test");
+        unsupported.id = None;
+        unsupported.login.as_mut().unwrap().alias_reference = Some("{\"version\":2}".to_owned());
+        let mut ciphers = vec![malformed, unsupported];
+        let first = plan_alias_reconciliation(CONNECTION, &[], &ciphers).unwrap();
+        ciphers.reverse();
+        assert_eq!(
+            first,
+            plan_alias_reconciliation(CONNECTION, &[], &ciphers).unwrap()
         );
     }
 

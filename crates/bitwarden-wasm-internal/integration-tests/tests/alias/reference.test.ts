@@ -228,4 +228,28 @@ test("journal canonicalization, merge, and reduction preserve a delete tombstone
   expect(state.resources[0].identity.aliasId).toBe("opaque/tombstone");
   expect(state.resources[0].tombstoned).toBe(true);
   expect(state.conflicts).toEqual([]);
+
+  const collision: AliasJournal = {
+    ...deleteJournal,
+    events: [{ ...deleteJournal.events[0], eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" }],
+  };
+  const changedTarget: AliasJournal = {
+    ...collision,
+    events: [
+      {
+        ...collision.events[0],
+        replicaId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+        target: { ...target, aliasId: "another-resource" },
+      },
+    ],
+  };
+  for (const conflicting of [collision, changedTarget]) {
+    expect(canonicalize_alias_journal(conflicting)).toEqual(conflicting);
+    expect(() => merge_alias_journals(canonical, conflicting)).toThrow(
+      expect.objectContaining({ name: "sync-conflict" }),
+    );
+    expect(() => merge_alias_journals(conflicting, canonical)).toThrow(
+      expect.objectContaining({ name: "sync-conflict" }),
+    );
+  }
 });

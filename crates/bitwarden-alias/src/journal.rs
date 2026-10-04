@@ -388,11 +388,12 @@ impl AliasJournal {
         if events.len() > MAX_JOURNAL_EVENTS {
             return Err(AliasError::InvalidInput);
         }
-        Ok(Self {
+        Self {
             version: ALIAS_JOURNAL_VERSION,
             connection_id,
             events: events.into_values().collect(),
-        })
+        }
+        .canonicalize()
     }
 
     /// Reduces canonical facts into deterministic operation, resource, and conflict state.
@@ -775,6 +776,42 @@ mod tests {
             first.merge(&second).unwrap().merge(&third).unwrap(),
             first.merge(&second.merge(&third).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn merge_rejects_conflicts_between_individually_valid_snapshots() {
+        let first = event(
+            "123e4567-e89b-42d3-a456-426614174027",
+            AliasOperationPhase::Acknowledged,
+            1,
+        );
+        let left = AliasJournal {
+            version: ALIAS_JOURNAL_VERSION,
+            connection_id: first.target.as_ref().unwrap().connection_id.clone(),
+            events: vec![first.clone()],
+        };
+
+        let mut coordinate_collision = first.clone();
+        coordinate_collision.event_id = "123e4567-e89b-42d3-a456-426614174028".to_owned();
+
+        let mut target_conflict = coordinate_collision.clone();
+        target_conflict.replica_id = "123e4567-e89b-42d3-a456-426614174029".to_owned();
+        target_conflict.target.as_mut().unwrap().alias_id = "another-resource".to_owned();
+
+        let mut operation_conflict = coordinate_collision.clone();
+        operation_conflict.replica_id = "123e4567-e89b-42d3-a456-426614174029".to_owned();
+        operation_conflict.operation = AliasOperationKind::Get;
+
+        for conflicting_event in [coordinate_collision, target_conflict, operation_conflict] {
+            let right = AliasJournal {
+                events: vec![conflicting_event],
+                ..left.clone()
+            };
+            left.clone().canonicalize().unwrap();
+            right.clone().canonicalize().unwrap();
+            assert!(matches!(left.merge(&right), Err(AliasError::SyncConflict)));
+            assert!(matches!(right.merge(&left), Err(AliasError::SyncConflict)));
+        }
     }
 
     #[test]
