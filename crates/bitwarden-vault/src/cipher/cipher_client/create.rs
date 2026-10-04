@@ -201,13 +201,16 @@ impl CiphersClient {
 #[cfg(test)]
 mod tests {
     use bitwarden_api_api::{apis::ApiClient, models::CipherResponseModel};
-    use bitwarden_core::key_management::SymmetricKeySlotId;
+    use bitwarden_core::{
+        Client, client::test_accounts::test_bitwarden_com_account,
+        key_management::SymmetricKeySlotId,
+    };
     use bitwarden_crypto::SymmetricKeyAlgorithm;
     use bitwarden_test::MemoryRepository;
     use chrono::Utc;
 
     use super::*;
-    use crate::{CipherId, LoginView};
+    use crate::{CipherId, LoginView, VaultClientExt};
 
     const TEST_CIPHER_ID: &str = "5faa9684-c793-4a2d-8a12-b33900187097";
     const TEST_COLLECTION_ID: &str = "73546b86-8802-4449-ad2a-69ea981b4ffd";
@@ -343,14 +346,6 @@ mod tests {
 
     #[tokio::test]
     async fn alias_bound_create_uses_opaque_blob_and_restores_binding() {
-        let store: KeyStore<KeySlotIds> = KeyStore::default();
-        {
-            let mut ctx = store.context_mut();
-            let local_key_id = ctx.make_symmetric_key(SymmetricKeyAlgorithm::Aes256CbcHmac);
-            ctx.persist_symmetric_key(local_key_id, SymmetricKeySlotId::User)
-                .unwrap();
-        }
-
         let cipher_id: CipherId = TEST_CIPHER_ID.parse().unwrap();
         let api_client = ApiClient::new_mocked(move |mock| {
             mock.ciphers_api
@@ -387,7 +382,11 @@ mod tests {
                 .once();
         });
 
-        let repository = MemoryRepository::<Cipher>::default();
+        let client =
+            Client::init_test_account_with_api_client(test_bitwarden_com_account(), api_client)
+                .await;
+        let ciphers = client.vault().ciphers();
+        let repository = ciphers.get_repository().unwrap();
         let mut request = generate_test_cipher_create_request();
         request
             .r#type
@@ -400,23 +399,7 @@ mod tests {
             .expect("login request")
             .alias_reference = Some(TEST_ALIAS_REFERENCE.to_string());
 
-        let view = convert_request_to_cipher_view(request);
-        assert!(super::super::should_use_blob_encryption_for_view(
-            &store.context(),
-            &view
-        ));
-
-        let result = create_cipher(
-            &store,
-            &api_client,
-            &repository,
-            TEST_USER_ID.parse().unwrap(),
-            view,
-            false,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = ciphers.create(request).await.unwrap();
 
         assert_eq!(
             result.login.and_then(|login| login.alias_reference),

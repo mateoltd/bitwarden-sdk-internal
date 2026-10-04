@@ -27,5 +27,8 @@ scripts/alias-sdk/check-security-contract.sh
 
 The formal script obtains TLA+ 1.8.0 from the official release and verifies its pinned SHA-256
 digest before checking all four configurations. Java 11 or newer and `curl` are required. The
-consolidated gate then runs the Rust and UniFFI refinement tests. Versioned WASM conformance
-consumes the same `conformance-vectors.json`; no copied binding-specific vector is authoritative.
+consolidated gate then runs the Rust and UniFFI refinement tests. Rust consumes the reference,
+adapter, capability, journal-merge, and reconciliation vectors. UniFFI consumes the reference
+vectors. WASM uses separate explicit contract cases; it does not load this JSON. The named
+`rejectedJournalVectors` and `lifecycleTraces` entries describe coverage obligations rather than
+executable inputs. Their behavior is exercised by separate journal and transport tests.

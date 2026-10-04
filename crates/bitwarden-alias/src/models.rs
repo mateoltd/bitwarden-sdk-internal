@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use bitwarden_sensitive_value::{ExposeSensitive, SensitiveString};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")]
@@ -117,13 +115,10 @@ impl AliasProviderCapabilities {
         {
             return Err(AliasError::CapabilityUnsupported);
         }
-        let mut seen = HashSet::with_capacity(self.extensions.len());
         let mut previous: Option<&str> = None;
         for extension in &self.extensions {
             validate_capability_id(extension)?;
-            if !seen.insert(extension.as_str())
-                || previous.is_some_and(|value| value > extension.as_str())
-            {
+            if previous.is_some_and(|value| value >= extension.as_str()) {
                 return Err(AliasError::InvalidInput);
             }
             previous = Some(extension);

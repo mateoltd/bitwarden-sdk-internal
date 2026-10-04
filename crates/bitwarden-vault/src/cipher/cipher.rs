@@ -2530,13 +2530,12 @@ mod tests {
     #[test]
     fn test_decrypt_restricted_cipher_view_login_omits_secrets() {
         let (org, key_store) = restricted_test_key_store();
-        // A rogue/over-sharing server also stuffs an encrypted password into the envelope; the
+        // A rogue/over-sharing server also stuffs encrypted secrets into the envelope; the
         // allowlist (`RestrictedCipherData`) must ignore anything outside name + uris.
-        let cipher = restricted_cipher(
-            org,
-            CipherType::Login,
-            RESTRICTED_LOGIN_ENVELOPE_WITH_PASSWORD.to_string(),
-        );
+        let mut envelope: serde_json::Value =
+            serde_json::from_str(RESTRICTED_LOGIN_ENVELOPE_WITH_PASSWORD).unwrap();
+        envelope["aliasReference"] = envelope["password"].clone();
+        let cipher = restricted_cipher(org, CipherType::Login, envelope.to_string());
         let view: CipherView = key_store.decrypt(&cipher).unwrap();
 
         assert!(view.partial);

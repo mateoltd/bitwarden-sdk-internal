@@ -116,6 +116,7 @@ struct AliasReferenceConsumer {
 
     private static func cipher(id: Int, username: String) -> CipherView {
         CipherView(
+            partial: false,
             id: cipherId(id),
             organizationId: nil,
             folderId: nil,

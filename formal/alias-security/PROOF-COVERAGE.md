@@ -40,17 +40,22 @@ abstraction and do not assert a security result.
 
 | Contract area                 | Canonical vector or trace                    | Production consumers                              | Drift detected                                                                                                                         |
 | ----------------------------- | -------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Four-field v1 reference       | `referenceSchema`, `referenceVectors`        | Rust, UniFFI, WASM                                | Exact order and field set, opaque string IDs, normalization, connection isolation, and secret/metadata exclusion.                      |
-| Fail-closed decoding          | `rejectedReferenceVectors`                   | Rust, UniFFI, WASM                                | Missing/malformed/unsupported version, unknown field, provider-specific old shape, numeric ID, bad UUID/address, and bounds rejection. |
+| Four-field v1 reference       | `referenceSchema`, `referenceVectors`        | Rust vectors and explicit binding cases           | Exact order and field set, opaque string IDs, normalization, connection isolation, and secret/metadata exclusion.                      |
+| Fail-closed decoding          | `rejectedReferenceVectors`                   | Rust/UniFFI vectors and explicit WASM cases       | Missing/malformed/unsupported version, unknown field, provider-specific old shape, numeric ID, bad UUID/address, and bounds rejection. |
 | Extensible adapter contract   | `adapterVectors`, `capabilityVectors`        | Rust and generated definitions                    | Validated normalized identifiers, provider-neutral capability names, and no named-provider common enum.                                |
-| Causal journal convergence    | `journalSchema`, `journalMergeVectors`       | Rust, UniFFI, WASM, Swift, Kotlin                 | Canonical event shape, causal ordering, CAI merge, event-ID collision failure, explicit conflict/unknown, and tombstone dominance.     |
-| Reconciliation frame          | `reconciliationVectors`                      | Rust, UniFFI, WASM                                | No address inference, active connection scope, plan/apply idempotence, and unrelated-field/cipher preservation.                        |
+| Causal journal convergence    | `journalSchema`, `journalMergeVectors`       | Rust vectors and separate binding smoke cases     | Canonical event shape, causal ordering, CAI merge, event-ID collision failure, explicit conflict/unknown, and tombstone dominance.     |
+| Reconciliation frame          | `reconciliationVectors`                      | Rust vectors and explicit WASM cases              | No address inference, active connection scope, plan/apply idempotence, and unrelated-field/cipher preservation.                        |
 | Lifecycle replay discipline   | `lifecycleTraces`, `operationSemantics`      | Real adapter plus Rust/WASM tests                 | Fresh-read success, bounded interference, unknown-no-replay, not-found delete idempotence, and delete/disable separation.              |
 | Secret and telemetry boundary | schema forbidden fields and sentinel vectors | Cross-language generation, logging/security gates | Credential, endpoint, adapter-native payload, raw body, identifier, and address leakage.                                               |
 
-`conformance-vectors.json` is the shared source artifact. The production refinement test hashes
-every model file in its declared order, so a TLA+ edit requires an explicit vector revision and
-digest.
+`conformance-vectors.json` supplies executable Rust reference, adapter, capability, journal-merge,
+and reconciliation vectors, plus UniFFI reference vectors. WASM cases are implemented separately.
+`rejectedJournalVectors` and `lifecycleTraces` are named coverage obligations without executable
+inputs; separate journal and transport tests cover those behaviors. Swift and Android packaged
+consumer gates compile their probes, while Kotlin/JVM runs its `main`. Generated native runtime
+acceptance is a separate obligation. The uncalled `binding-integration-tests` samples are examples,
+not evidence of a passing native gate. The production refinement test hashes every model file in its
+declared order, so a TLA+ edit requires an explicit vector revision and digest.
 
 ## Checked abstraction and honest gaps
 

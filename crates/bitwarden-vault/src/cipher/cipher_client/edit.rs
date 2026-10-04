@@ -526,6 +526,7 @@ mod tests {
     use bitwarden_core::key_management::{
         SymmetricKeySlotId, create_test_crypto_with_user_and_org_key,
     };
+    use bitwarden_core::{Client, client::test_accounts::test_bitwarden_com_account};
     use bitwarden_crypto::{
         KeyStore, PrimitiveEncryptable, SymmetricCryptoKey, SymmetricKeyAlgorithm,
     };
@@ -535,7 +536,7 @@ mod tests {
     use super::*;
     use crate::{
         Cipher, CipherId, CipherRepromptType, CipherType, FieldType, Login, LoginView,
-        PasswordHistoryView, password_history::MAX_PASSWORD_HISTORY_ENTRIES,
+        PasswordHistoryView, VaultClientExt, password_history::MAX_PASSWORD_HISTORY_ENTRIES,
     };
 
     const TEST_CIPHER_ID: &str = "5faa9684-c793-4a2d-8a12-b33900187097";
@@ -1036,6 +1037,59 @@ mod tests {
             deleted_date: None,
             archived_date: None,
         }
+    }
+
+    #[tokio::test]
+    async fn alias_bound_gated_edit_uses_blob_and_keeps_durable_state_restricted() {
+        let cipher_id: CipherId = TEST_CIPHER_ID.parse().unwrap();
+        let org: OrganizationId = "1bc9ac1e-f5aa-45f2-94bf-b181009709b8".parse().unwrap();
+        let envelope = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let response_envelope = envelope.clone();
+        let api = ApiClient::new_mocked(move |mock| {
+            mock.ciphers_api
+                .expect_put()
+                .once()
+                .returning(move |id, body| {
+                    assert_eq!(id, uuid::Uuid::from(cipher_id));
+                    let body = body.unwrap();
+                    assert!(body.login.is_none());
+                    let data = body.data.unwrap();
+                    assert!(!data.contains("alias@example.test"));
+                    let mut response = gated_response_model(cipher_id, org, body.r#type);
+                    response.partial_data = Some(response_envelope.lock().unwrap().clone());
+                    Ok(response)
+                });
+        });
+        let client =
+            Client::init_test_account_with_api_client(test_bitwarden_com_account(), api).await;
+        let name = "Restricted Name"
+            .to_owned()
+            .encrypt(
+                &mut client.internal.get_key_store().context(),
+                SymmetricKeySlotId::Organization(org),
+            )
+            .unwrap();
+        *envelope.lock().unwrap() = serde_json::json!({"name": name, "uris": []}).to_string();
+        let ciphers = client.vault().ciphers();
+        let repository = ciphers.get_repository().unwrap();
+        let mut stored = gated_stored_cipher(cipher_id, org);
+        stored.partial_data = Some(envelope.lock().unwrap().clone());
+        repository.set(cipher_id, stored).await.unwrap();
+        let mut original = generate_test_cipher();
+        original.organization_id = Some(org);
+        original.login.as_mut().unwrap().alias_reference = Some(
+            r#"{"version":1,"connectionId":"11111111-1111-4111-8111-111111111111","aliasId":"opaque/id:7","address":"alias@example.test"}"#.to_owned(),
+        );
+        let result = ciphers
+            .edit_gated(original.clone().try_into().unwrap(), original)
+            .await
+            .unwrap();
+        assert!(result.partial);
+        assert!(result.login.unwrap().alias_reference.is_none());
+        let persisted = repository.get(cipher_id).await.unwrap().unwrap();
+        assert!(persisted.partial_data.is_some());
+        assert!(persisted.data.is_none());
+        assert!(persisted.login.is_none());
     }
 
     #[tokio::test]

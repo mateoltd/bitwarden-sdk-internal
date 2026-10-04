@@ -6,6 +6,7 @@ import {
   AliasProviderAdapter,
   AliasProviderCapabilities,
   SensitiveString,
+  SendReplyIdentity,
 } from "@bitwarden/sdk-internal";
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -96,28 +97,60 @@ const successfulAdapter = (): AliasProviderAdapter => ({
 });
 
 test("executes the complete lifecycle through the injected neutral adapter", async () => {
-  const client = new AliasClient(connection, successfulAdapter());
-  expect(client.connection()).toEqual(connection);
+  const adapter = successfulAdapter();
+  const calls: string[] = [];
+  const get = adapter.get;
+  adapter.get = async (value) => {
+    expect(value).toEqual(identity());
+    calls.push("get");
+    return get(value);
+  };
+  const setEnabled = adapter.setEnabled;
+  adapter.setEnabled = async (value, enabled) => {
+    expect(value).toEqual(identity());
+    expect(enabled).toBe(false);
+    calls.push("setEnabled");
+    return setEnabled(value, enabled);
+  };
+  const listReplies = adapter.listSendReplyIdentities;
+  adapter.listSendReplyIdentities = async (value, pageToken) => {
+    expect(value).toEqual(identity());
+    expect(pageToken).toBe("opaque.page:7");
+    calls.push("listSendReplyIdentities");
+    return listReplies(value, pageToken);
+  };
+  const removed: SendReplyIdentity[] = [];
+  adapter.removeSendReplyIdentity = async (value) => {
+    removed.push(value);
+    return { status: "success", value: null };
+  };
+  const client = new AliasClient(connection, adapter);
+  try {
+    expect(client.connection()).toEqual(connection);
 
-  const created = await client.create({ hostname: sensitive("example.test") });
-  expect(created.identity.aliasId).toBe("provider/object:7");
-  expect((await client.list({ pageToken: undefined })).aliases).toEqual([created]);
-  expect(await client.get(created.identity)).toEqual(created);
-  expect((await client.set_enabled(created.identity, false)).lifecycle).toBe("disabled");
+    const created = await client.create({ hostname: sensitive("example.test") });
+    expect(created.identity.aliasId).toBe("provider/object:7");
+    expect((await client.list({ pageToken: undefined })).aliases).toEqual([created]);
+    expect(await client.get(created.identity)).toEqual(created);
+    expect((await client.set_enabled(created.identity, false)).lifecycle).toBe("disabled");
 
-  const reply = await client.create_send_reply_identity({
-    alias: created.identity,
-    recipient: sensitive("recipient@example.test"),
-  });
-  expect(reply.identityId).toBe("reply/object:9");
-  expect((await client.list_send_reply_identities(created.identity, undefined)).identities).toEqual(
-    [reply],
-  );
-  const blocked = await client.set_send_reply_blocked(reply, true);
-  expect(blocked).toEqual({ ...reply, blocked: true });
-  await client.remove_send_reply_identity(blocked);
-  expect((await client.delete(created.identity)).deleted).toBe(true);
-  client.free();
+    const reply = await client.create_send_reply_identity({
+      alias: created.identity,
+      recipient: sensitive("recipient@example.test"),
+    });
+    expect(reply.identityId).toBe("reply/object:9");
+    expect(
+      (await client.list_send_reply_identities(created.identity, "opaque.page:7")).identities,
+    ).toEqual([reply]);
+    const blocked = await client.set_send_reply_blocked(reply, true);
+    expect(blocked).toEqual({ ...reply, blocked: true });
+    await client.remove_send_reply_identity(blocked);
+    expect(removed).toEqual([blocked]);
+    expect(calls).toEqual(["get", "setEnabled", "listSendReplyIdentities"]);
+    expect((await client.delete(created.identity)).deleted).toBe(true);
+  } finally {
+    client.free();
+  }
 });
 
 test("rejects foreign identities before dispatch", async () => {

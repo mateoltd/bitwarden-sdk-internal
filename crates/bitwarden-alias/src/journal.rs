@@ -815,6 +815,30 @@ mod tests {
     }
 
     #[test]
+    fn merge_deduplicates_within_raw_input_limits_before_checking_union_size() {
+        let event = event(
+            "123e4567-e89b-42d3-a456-426614174030",
+            AliasOperationPhase::Dispatched,
+            1,
+        );
+        let left = AliasJournal {
+            version: ALIAS_JOURNAL_VERSION,
+            connection_id: event.target.as_ref().unwrap().connection_id.clone(),
+            events: vec![event.clone(); MAX_JOURNAL_EVENTS],
+        };
+        let merged = left.merge(&left).unwrap();
+        assert_eq!(merged.events, vec![event.clone()]);
+        let oversized = AliasJournal {
+            events: vec![event; MAX_JOURNAL_EVENTS + 1],
+            ..left.clone()
+        };
+        assert!(matches!(
+            oversized.merge(&left),
+            Err(AliasError::InvalidInput)
+        ));
+    }
+
+    #[test]
     fn acknowledged_delete_is_a_non_resurrecting_tombstone() {
         let journal = AliasJournal {
             version: 1,

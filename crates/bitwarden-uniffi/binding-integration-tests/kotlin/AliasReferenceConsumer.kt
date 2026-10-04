@@ -109,6 +109,7 @@ private fun alias(identity: AliasIdentity) = Alias(
 private fun cipherId(index: Int): CipherId = "00000000-0000-4000-8000-%012x".format(index)
 
 private fun cipher(id: Int, username: String) = CipherView(
+    partial = false,
     id = cipherId(id),
     organizationId = null,
     folderId = null,

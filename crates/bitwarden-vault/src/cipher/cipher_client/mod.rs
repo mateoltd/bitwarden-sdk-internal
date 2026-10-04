@@ -648,6 +648,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn alias_binding_forces_blob_below_the_account_rollout_threshold() {
+        let client = Client::init_test_account(test_bitwarden_com_account()).await;
+        for organization_id in [
+            None,
+            Some("1bc9ac1e-f5aa-45f2-94bf-b181009709b8".parse().unwrap()),
+        ] {
+            let mut view = test_cipher_view();
+            view.organization_id = organization_id;
+            assert!(
+                !client
+                    .vault()
+                    .ciphers()
+                    .encrypt(view.clone())
+                    .await
+                    .unwrap()
+                    .cipher
+                    .is_blob_encrypted()
+            );
+            let reference = r#"{"version":1,"connectionId":"11111111-1111-4111-8111-111111111111","aliasId":"opaque/id:7","address":"alias@example.test"}"#;
+            view.login.as_mut().unwrap().alias_reference = Some(reference.to_owned());
+            let encrypted = client.vault().ciphers().encrypt(view).await.unwrap();
+            assert!(encrypted.cipher.is_blob_encrypted());
+            let restored = client
+                .vault()
+                .ciphers()
+                .decrypt(encrypted.cipher)
+                .await
+                .unwrap();
+            assert_eq!(
+                restored.login.unwrap().alias_reference.as_deref(),
+                Some(reference)
+            );
+        }
+    }
+
     /// The V1 test account's AES-CBC-HMAC user key has no stored key id, but derives one from its
     /// key material, so the field is populated with that derived id.
     #[tokio::test]

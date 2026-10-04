@@ -23,7 +23,7 @@ pub const ALIAS_RECONCILIATION_REPORT_VERSION: u32 = 1;
 /// Canonical v1 vault binding. Field order is normative for serialization.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[cfg_attr(feature = "wasm", derive(Tsify), tsify(into_wasm_abi, from_wasm_abi))]
-#[derive(Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AliasReference {
     /// Canonical alias-reference schema version.
@@ -34,17 +34,6 @@ pub struct AliasReference {
     pub alias_id: String,
     /// Normalized alias email address captured with the binding.
     pub address: SensitiveString,
-}
-
-impl Clone for AliasReference {
-    fn clone(&self) -> Self {
-        Self {
-            version: self.version,
-            connection_id: self.connection_id.clone(),
-            alias_id: self.alias_id.clone(),
-            address: self.address.clone(),
-        }
-    }
 }
 
 impl core::fmt::Debug for AliasReference {
@@ -1170,6 +1159,10 @@ mod tests {
     fn binding_requires_username_integrity_and_clears_after_edit() {
         let identity = alias("alpha", "alias@example.test").identity;
         let encoded = create_alias_reference(&identity).unwrap().expose_owned();
+        assert!(matches!(
+            bind_alias_reference(&encoded, login("other@example.test")),
+            Err(AliasReferenceError::UsernameMismatch)
+        ));
         let bound = bind_alias_reference(&encoded, login("Alias@Example.Test")).unwrap();
         assert!(bound.changed);
         assert_eq!(bound.cipher.notes.as_deref(), Some("preserve"));
@@ -1246,5 +1239,81 @@ mod tests {
             Err(AliasReconciliationError::InvalidInput)
         ));
         assert_eq!(serde_json::to_value(&ciphers).unwrap(), original);
+    }
+
+    #[test]
+    fn stale_second_target_prevents_all_reconciliation_writes() {
+        let aliases = vec![
+            alias("opaque-A", "new-a@example.test"),
+            alias("opaque-B", "new-b@example.test"),
+        ];
+        let ciphers = [
+            alias("opaque-A", "old-a@example.test"),
+            alias("opaque-B", "old-b@example.test"),
+        ]
+        .into_iter()
+        .map(|old| {
+            bind_alias_reference(
+                create_alias_reference(&old.identity).unwrap().expose(),
+                login(old.identity.address.expose()),
+            )
+            .unwrap()
+            .cipher
+        })
+        .collect::<Vec<_>>();
+        let plan = plan_alias_reconciliation(CONNECTION, &aliases, &ciphers).unwrap();
+        assert_eq!(plan.actions.len(), 2);
+        for changed_inventory in [false, true] {
+            let mut aliases = aliases.clone();
+            let mut ciphers = ciphers.clone();
+            if changed_inventory {
+                aliases.pop();
+            } else {
+                ciphers[1].login.as_mut().unwrap().alias_reference = None;
+            }
+            let before = serde_json::to_value(&ciphers).unwrap();
+            assert!(matches!(
+                apply_alias_reconciliation(&plan, &aliases, &mut ciphers),
+                Err(AliasReconciliationError::StalePlan)
+            ));
+            assert_eq!(serde_json::to_value(ciphers).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn duplicate_claims_never_repair_and_addresses_never_infer_bindings() {
+        let current = alias("opaque-A", "new@example.test");
+        let old = alias("opaque-A", "old@example.test");
+        let encoded = create_alias_reference(&old.identity).unwrap();
+        let ciphers = vec![
+            bind_alias_reference(encoded.expose(), login(old.identity.address.expose()))
+                .unwrap()
+                .cipher,
+            bind_alias_reference(encoded.expose(), login(old.identity.address.expose()))
+                .unwrap()
+                .cipher,
+        ];
+        let duplicate =
+            plan_alias_reconciliation(CONNECTION, std::slice::from_ref(&current), &ciphers)
+                .unwrap();
+        assert_eq!(duplicate.summary.duplicate_bindings, 1);
+        assert!(duplicate.actions.is_empty());
+
+        let unbound = plan_alias_reconciliation(
+            CONNECTION,
+            std::slice::from_ref(&current),
+            &[login(current.identity.address.expose())],
+        )
+        .unwrap();
+        assert_eq!(unbound.summary.unbound_aliases, 1);
+        assert!(unbound.actions.is_empty());
+        assert!(matches!(
+            plan_alias_reconciliation(CONNECTION, &[current.clone(), current], &[]),
+            Err(AliasReconciliationError::DuplicateAliasId)
+        ));
+        assert!(matches!(
+            plan_alias_reconciliation(CONNECTION, &[], &[ciphers[0].clone(), ciphers[0].clone()]),
+            Err(AliasReconciliationError::DuplicateCipherId)
+        ));
     }
 }
