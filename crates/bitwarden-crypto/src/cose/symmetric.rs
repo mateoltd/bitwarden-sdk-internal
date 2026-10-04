@@ -984,39 +984,106 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_aes256_cbc_hmac_cose0_fails_with_wrong_key() {
-        let message = encrypt_cose0(
-            CoseContentEncryptionAlgorithm::Aes256CbcHmacSha256,
-            CoseEncrypt0Builder::new(),
-            HeaderBuilder::new().build(),
-            PLAINTEXT,
-            &CEK_64,
+    // Fixed IVs are test fixtures only. Production encryption always generates a fresh IV.
+    fn aes256_cbc_hmac_test_message(iv_last_byte: u8) -> CoseEncrypt0 {
+        let mut iv = vec![0; 16];
+        iv[15] = iv_last_byte;
+        let unprotected = HeaderBuilder::new().iv(iv).build();
+        let nonce = Aes256CbcHmacSha256AeadNonce::try_from(
+            &CoseEncrypt0Builder::new()
+                .unprotected(unprotected.clone())
+                .build(),
         )
         .unwrap();
+        let mut protected = HeaderBuilder::new().build();
+        protected.alg = Some(Aes256CbcHmacSha256Aead::COSE_ALGORITHM);
+        CoseEncrypt0Builder::new()
+            .protected(protected)
+            .unprotected(unprotected)
+            .create_ciphertext(PLAINTEXT, &[], |data, aad| {
+                Aes256CbcHmacSha256Aead::encrypt(&CEK_64, &nonce, data, aad)
+                    .encrypted_bytes()
+                    .to_vec()
+            })
+            .build()
+    }
 
+    #[test]
+    fn test_aes256_cbc_hmac_cose0_wrong_encryption_subkey() {
+        // With IV 118, the wrong AES sub-key produces valid PKCS7 padding. The unchanged
+        // MAC sub-key still authenticates the message, but the original plaintext is not recovered.
+        let message = aes256_cbc_hmac_test_message(118);
+        let policy =
+            CoseAlgorithmPolicy::Exactly(CoseContentEncryptionAlgorithm::Aes256CbcHmacSha256);
+        assert_eq!(decrypt_cose0(&message, policy, &CEK_64).unwrap(), PLAINTEXT);
         let mut wrong_cek = CEK_64;
         wrong_cek[0] ^= 1;
-        assert!(
-            decrypt_cose0(
-                &message,
-                CoseAlgorithmPolicy::Exactly(CoseContentEncryptionAlgorithm::Aes256CbcHmacSha256),
-                &wrong_cek,
-            )
-            .is_err()
+        let wrong_plaintext = decrypt_cose0(&message, policy, &wrong_cek).unwrap();
+        assert_eq!(
+            wrong_plaintext,
+            [
+                168, 92, 193, 125, 82, 135, 138, 187, 40, 138, 254, 221, 67, 233, 170, 125, 212,
+                251, 100, 17, 133, 165, 162, 226, 66, 47, 117, 46, 109, 53, 187
+            ]
         );
+        assert_ne!(wrong_plaintext, PLAINTEXT);
 
-        // Flipping only the MAC half must fail too — it is the half that authenticates.
+        // IV 0 exercises the other outcome: authenticated bytes with invalid padding.
+        assert!(matches!(
+            decrypt_cose0(&aes256_cbc_hmac_test_message(0), policy, &wrong_cek),
+            Err(CryptoError::KeyDecrypt)
+        ));
+    }
+
+    #[test]
+    fn test_aes256_cbc_hmac_cose0_fails_with_wrong_mac_subkey() {
         let mut wrong_mac_key = CEK_64;
         wrong_mac_key[32] ^= 1;
-        assert!(
-            decrypt_cose0(
-                &message,
-                CoseAlgorithmPolicy::Exactly(CoseContentEncryptionAlgorithm::Aes256CbcHmacSha256),
-                &wrong_mac_key,
-            )
-            .is_err()
-        );
+        for iv in [0, 118] {
+            assert!(matches!(
+                decrypt_cose0(
+                    &aes256_cbc_hmac_test_message(iv),
+                    CoseAlgorithmPolicy::Exactly(
+                        CoseContentEncryptionAlgorithm::Aes256CbcHmacSha256
+                    ),
+                    &wrong_mac_key,
+                ),
+                Err(CryptoError::KeyDecrypt)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_aes256_cbc_hmac_cose0_rejects_changed_protected_header_and_lengths() {
+        let message = aes256_cbc_hmac_test_message(118);
+        let policy =
+            CoseAlgorithmPolicy::Exactly(CoseContentEncryptionAlgorithm::Aes256CbcHmacSha256);
+        let mut changed_header = message.clone();
+        changed_header.protected.header.key_id.push(1);
+        assert!(matches!(
+            decrypt_cose0(&changed_header, policy, &CEK_64),
+            Err(CryptoError::KeyDecrypt)
+        ));
+        let mut short_nonce = message.clone();
+        short_nonce.unprotected.iv.pop();
+        assert!(matches!(
+            decrypt_cose0(&short_nonce, policy, &CEK_64),
+            Err(CryptoError::InvalidNonceLength)
+        ));
+        for len in [0, 31, 32, 63, 65] {
+            assert!(matches!(
+                decrypt_cose0(&message, policy, &vec![7; len]),
+                Err(CryptoError::InvalidKeyLen)
+            ));
+        }
+        for len in [0, 31, 32, 33, 63] {
+            let mut truncated = message.clone();
+            truncated.ciphertext.as_mut().unwrap().truncate(len);
+            assert!(matches!(
+                decrypt_cose0(&truncated, policy, &CEK_64),
+                Err(CryptoError::KeyDecrypt)
+            ));
+        }
     }
 
     #[test]

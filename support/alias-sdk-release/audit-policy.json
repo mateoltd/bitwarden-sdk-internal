@@ -58,7 +58,7 @@
     "sourceCatalog": {
       "algorithm": "sha256(sorted-sha256-path-lines)",
       "fileCount": 2320,
-      "sha256": "bd7635f345c6e8529e822e96414a864ea5157b867d3f521b4e9bcdc8af95fec5"
+      "sha256": "054353d3a19840d733883637d50f3f2d283f3dd2e9738c5bc00c73f51e8cd4f9"
     },
     "privateCallers": {
       "crates/bitwarden-crypto/src/enc_string/asymmetric.rs": "2458b9a452ba5257bee3196c9a2ad46a6d2fc06db2f2558e40e9bc1b01b409f1",
