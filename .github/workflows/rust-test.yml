@@ -50,6 +50,13 @@ jobs:
       - name: Verify exact dependency and OAEP boundary
         shell: bash
         run: bash scripts/alias-sdk/test-rsa-oaep.sh
+      - name: Install access-property detector
+        if: matrix.os == 'ubuntu-24.04'
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Verify optimized division access property and original control
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: bash scripts/alias-sdk/test-rsa-division.sh
 
   test:
     name: ${{ matrix.os }} / default

@@ -31,4 +31,21 @@ test_lock = tomllib.loads((vendor / 'Cargo.lock').read_text())
 for name, version in {'crypto-bigint': '0.7.5', 'crypto-common': '0.2.2', 'digest': '0.11.3', 'getrandom': '0.4.3', 'zeroize': '1.9.0'}.items():
     for graph in [lock, test_lock]:
         require(any((entry['name'] == name and entry['version'] == version for entry in graph['package'])), f'{name} does not match the production boundary')
-print('Exact RSA patch verified; RUSTSEC-2023-0071 remains explicitly tracked')
+bigint = root / 'support/vendor/crypto-bigint'
+bigint_source = json.loads((bigint / 'SOURCE.json').read_text())
+require(bigint_source['package'] == 'crypto-bigint' and bigint_source['version'] == '0.7.5', 'Integer provenance invariant mismatch')
+require(bigint_source['originalRegistrySha256'] == '1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271', 'Integer provenance invariant mismatch')
+require(bigint_source['originalCommit'] == '2b54d248cce00457e3afb5650d9b14632ef4a116', 'Integer provenance invariant mismatch')
+require(bigint_source['advisory'] == 'RUSTSEC-2023-0071', 'Integer provenance invariant mismatch')
+bigint_actual = {file.relative_to(bigint).as_posix(): hashlib.sha256(file.read_bytes()).hexdigest() for file in bigint.rglob('*') if file.is_file() and file.name != 'SOURCE.json'}
+require(bigint_actual == bigint_source['patchedFiles'], 'Integer candidate file set or checksum mismatch')
+bigint_changed = {name for name, digest in bigint_source['originalFiles'].items() if bigint_actual.get(name) != digest}
+require(bigint_changed == {'Cargo.toml', 'src/uint/ref_type/div.rs'}, 'Integer patch exceeded its scope')
+require(manifest['patch']['crates-io']['crypto-bigint'] == {'path': 'support/vendor/crypto-bigint'}, 'Integer production patch route mismatch')
+require(tomllib.loads((vendor / 'Cargo.toml').read_text())['patch']['crates-io']['crypto-bigint'] == {'path': '../crypto-bigint'}, 'Integer test patch route mismatch')
+for graph in [lock, test_lock]:
+    bigints = [entry for entry in graph['package'] if entry['name'] == 'crypto-bigint' and entry['version'] == '0.7.5']
+    require(len(bigints) == 1 and 'source' not in bigints[0], 'RSA integer boundary did not resolve to the local patch')
+require(tomllib.loads((bigint / 'Cargo.toml').read_text())['package']['rust-version'] == '1.86', 'Integer const barrier minimum mismatch')
+require(tomllib.loads((vendor / 'Cargo.toml').read_text())['package']['rust-version'] == '1.86', 'RSA boundary minimum mismatch')
+print('Exact RSA and integer patches verified; RUSTSEC-2023-0071 remains explicitly tracked')

@@ -4,3 +4,4 @@ formal/alias-security/*.tla text eol=lf
 
 # Vendored provenance hashes cover original bytes, including binary key fixtures.
 support/vendor/rsa/** -text
+support/vendor/crypto-bigint/** -text

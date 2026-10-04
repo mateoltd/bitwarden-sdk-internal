@@ -11,7 +11,7 @@
 
 [package]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 name = "rsa"
 version = "0.10.0-rc.18"
 authors = [
@@ -255,3 +255,6 @@ debug = 2
 
 [profile.dev]
 opt-level = 2
+
+[patch.crates-io]
+crypto-bigint = { path = "../crypto-bigint" }

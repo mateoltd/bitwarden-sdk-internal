@@ -32,3 +32,8 @@ the actual SDK OAEP boundary; passing tests alone do not resolve the advisory.
 Run `bash scripts/alias-sdk/test-rsa-oaep.sh` from the SDK root for fixed-width,
 entropy failure, both pinned Wycheproof sets, mixed MGF/label round trips and
 the no-default-features build. The native CI matrix runs that same boundary.
+
+The associated crypto-bigint 0.7.5 correction-mask candidate is applied to both
+production and standalone tests. Its const compiler barrier requires Rust 1.86;
+the SDK minimum remains Rust 1.88. Each dependency retains original identities,
+licenses and byte-level provenance. No advisory qualification is inferred.

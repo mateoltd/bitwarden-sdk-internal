@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["bitwarden_license/*", "crates/*"]
 default-members = ["crates/*"]
-exclude = ["support/lints", "support/vendor/rsa"]
+exclude = ["support/lints", "support/vendor/rsa", "support/vendor/crypto-bigint", "support/rsa-division-probe"]
 
 # Global settings for all crates should be defined here
 [workspace.package]
@@ -242,3 +242,6 @@ arrayref = { path = "support/vendor/arrayref" }
 # Exact original identity and downstream patch scope are recorded in SOURCE.json.
 # RUSTSEC-2023-0071 remains tracked; this is not an advisory-free upstream release.
 rsa = { path = "support/vendor/rsa" }
+
+# Prevent compiler-induced conditional correction loads in the RSA boundary.
+crypto-bigint = { path = "support/vendor/crypto-bigint" }
