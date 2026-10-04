@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly TLA_VERSION="1.8.0"
-readonly TLA_SHA256="eabd140a70f49eb9305a3bd3f3df944eddf87e5a90d329789085f8953a80533a"
+# v1.8.0 is a rolling prerelease whose assets are replaced by upstream builds.
+# Pin the official stable release's asset identity as well as its content hash.
+readonly TLA_VERSION="1.7.4"
+readonly TLA_ASSET_ID="184694200"
+readonly TLA_SHA256="936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
 readonly FORMAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly TOOL_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/bitwarden-alias-tla-${TLA_VERSION}"
+readonly TOOL_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/bitwarden-alias-tla-${TLA_VERSION}-${TLA_ASSET_ID}"
 readonly TLA_JAR="${TOOL_DIR}/tla2tools.jar"
 readonly MODEL_DIR="${TOOL_DIR}/model"
 
@@ -16,7 +19,8 @@ fi
 mkdir -p "${TOOL_DIR}"
 if [[ ! -f "${TLA_JAR}" ]]; then
     curl --fail --location --silent --show-error \
-        "https://github.com/tlaplus/tlaplus/releases/download/v${TLA_VERSION}/tla2tools.jar" \
+        --header "Accept: application/octet-stream" \
+        "https://api.github.com/repos/tlaplus/tlaplus/releases/assets/${TLA_ASSET_ID}" \
         --output "${TLA_JAR}"
 fi
 
@@ -30,7 +34,7 @@ else
 fi
 actual_sha256="${actual_sha256%% *}"
 if [[ "${actual_sha256}" != "${TLA_SHA256}" ]]; then
-    echo "TLA+ tools SHA-256 mismatch" >&2
+    echo "TLA+ ${TLA_VERSION} asset ${TLA_ASSET_ID} SHA-256 mismatch: expected ${TLA_SHA256}, got ${actual_sha256}" >&2
     exit 1
 fi
 

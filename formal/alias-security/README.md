@@ -25,10 +25,13 @@ Run the consolidated machine-checked contract with:
 scripts/alias-sdk/check-security-contract.sh
 ```
 
-The formal script obtains TLA+ 1.8.0 from the official release and verifies its pinned SHA-256
-digest before checking all four configurations. Java 11 or newer and `curl` are required. The
-consolidated gate then runs the Rust and UniFFI refinement tests. Rust consumes the reference,
-adapter, capability, journal-merge, and reconciliation vectors. UniFFI consumes the reference
-vectors. WASM uses separate explicit contract cases; it does not load this JSON. The named
+The formal script obtains TLA+ [1.7.4](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4) from
+official release asset `184694200` and verifies its pinned SHA-256 digest before checking all four
+configurations. The asset's source revision is `5a47802b5c391f59ecdd44117981f4ff8c0656ba`. The
+upstream 1.8.0 prerelease is a rolling build that replaces its assets, so its version URL cannot
+serve as a durable pin. A missing or modified pinned asset fails closed. Java 11 or newer and `curl`
+are required. The consolidated gate then runs the Rust and UniFFI refinement tests. Rust consumes
+the reference, adapter, capability, journal-merge, and reconciliation vectors. UniFFI consumes the
+reference vectors. WASM uses separate explicit contract cases; it does not load this JSON. The named
 `rejectedJournalVectors` and `lifecycleTraces` entries describe coverage obligations rather than
 executable inputs. Their behavior is exercised by separate journal and transport tests.
