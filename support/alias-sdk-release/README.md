@@ -34,7 +34,7 @@ artifact repin.
 
 ## Candidate gates
 
-The release workflow must pass all of these gates before assembling a candidate:
+The full release workflow must pass all of these gates before assembling a candidate:
 
 1. Gitleaks scan of the complete patch stack since `UPSTREAM_BASE`, using the pinned,
    checksum-verified scanner;
@@ -49,8 +49,13 @@ The release workflow must pass all of these gates before assembling a candidate:
 8. the pinned real SimpleLogin lifecycle on candidate source;
 9. a machine-readable handoff manifest with source and consumer pins, decisions, package paths,
    SHA-256 digests, audit/SBOM evidence, and per-package reproducibility evidence;
-10. a signed GitHub provenance bundle for non-pull-request runs, retained as supplemental evidence
-    without claiming that the repository exposes GitHub's attestation verification endpoint.
+10. signed GitHub provenance for non-pull-request runs, verified against the exact source,
+    repository, ref, and workflow before consumer integration.
+
+The launch integration branch assembles a scoped JavaScript candidate. It runs Rust and UniFFI
+security checks, WASM conformance, dependency audits, two WASM builds, and the TypeScript consumer.
+Swift, Kotlin, Android, full formal qualification, and the live provider lifecycle are separate
+qualification obligations. A scoped candidate does not establish that those checks passed.
 
 Every consumer is copied to a temporary directory and receives only a packaged artifact. A missing
 compiler, SDK, NDK, audit tool, or attestation permission is a failed prerequisite gate, never a
@@ -60,21 +65,23 @@ itself prove bit-identical output across different OS or toolchain versions. Car
 use their current upstream advisory databases at workflow runtime, so an older candidate's audit
 report is historical evidence, not a substitute for re-auditing before integration.
 
-The current Cargo graph has one accepted active finding, not a finding-free audit:
-`RUSTSEC-2023-0071` in `rsa 0.10.0-rc.18` through `bitwarden-crypto -> rsa`. RustSec provides no
-patched release. Alias operations do not call RSA private-key operations, and the SDK's private-key
-work is local rather than an alias-provider timing oracle. The narrow exception is owned by SDK
-Security Engineering, was reviewed 2026-08-14, and expires 2026-10-01. It does not cover consumers
-that expose private-key timing to remote observers. The machine-readable policy is
-`audit-policy.json`; CI rejects any other vulnerability, any changed package/version, a stale
-exception, or an expired review.
+The current Cargo graph has one unresolved active finding: `RUSTSEC-2023-0071` in `rsa 0.10.0-rc.18`
+through `bitwarden-crypto -> rsa`. RustSec provides no patched release. Alias lifecycle operations
+do not call RSA private-key operations, but the shared SDK includes RSA key decapsulation and the
+WASM PureCrypto RSA primitive. Consumer exposure must be assessed at those boundaries; a practical
+remote timing oracle has not been established here. The previous narrow exception expired on
+2026-10-01. It is not current risk acceptance, and CI rejects it. A new documented, time-bounded
+security-owner decision is a possible disposition, not an existing approval. No policy renewal or
+cryptographic remediation is implied by this document. The machine-readable policy remains
+`audit-policy.json`.
 
 The workflow is candidate-only. It never publishes a registry package, creates a Git tag, creates a
 GitHub release, opens a pull request, or pushes a branch. Pull-request runs produce unsigned preview
 artifacts. Push and manual candidate runs request a signed provenance bundle through GitHub Actions.
-The handoff manifest does not claim a GitHub-hosted attestation because this repository has not
-exposed one through GitHub's attestation API. Verify downloaded files against `SHA256SUMS` and
-retain the bundled provenance as supplemental evidence.
+The handoff manifest records the attestation strategy for its actual run. Verify downloaded files
+against `SHA256SUMS` and verify the signed provenance with `gh attestation verify`, restricting the
+source repository, ref, workflow, and commit. Historical successful attestations establish their
+exact candidate identity; they do not satisfy a current expired audit gate.
 
 ## Clean-room reproduction
 
