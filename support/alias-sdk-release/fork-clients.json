@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/mateoltd/bitwarden-clients.git",
+  "commit": "876ff7d9c1ce2e71abb97615fbe30fba79fd6ac6",
+  "base": "45eb0013dc413dab78932c418d209d89371febf6",
+  "node": "24.17.0",
+  "npm": "11.18.0"
+}
