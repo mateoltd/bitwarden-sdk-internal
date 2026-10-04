@@ -180,6 +180,15 @@ class RemediationContractTests(unittest.TestCase):
                 self.audit()
             self.current, self.status, self.database = saved
 
+    def test_empty_operational_error_is_not_a_successful_audit(self):
+        for report in [self.current, self.upstream, self.npm]:
+            for error in [{}, '', None, False]:
+                report['error'] = error
+                self.save_raw()
+                with self.assertRaisesRegex(ValueError, 'operational failure'):
+                    self.audit()
+            report.pop('error')
+
     def test_additional_advisory_changed_advisory_and_npm_findings(self):
         self.upstream['vulnerabilities']['list'].append(copy.deepcopy(self.finding))
         self.upstream['vulnerabilities']['list'][1]['advisory']['id'] = 'RUSTSEC-2026-9999'

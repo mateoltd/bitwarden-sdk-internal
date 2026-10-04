@@ -161,7 +161,7 @@ def identity_lock(root, policy, output):
 
 
 def validate_cargo(raw, exit_code, database_identity):
-    require(isinstance(raw, dict) and not raw.get('error'), 'cargo audit operational failure')
+    require(isinstance(raw, dict) and 'error' not in raw, 'cargo audit operational failure')
     database, lock, settings, vulns, warnings = [raw.get(key) for key in
                                               ['database', 'lockfile', 'settings', 'vulnerabilities', 'warnings']]
     # rustsec 0.33 may leave the two optional git fields null. Independently captured
@@ -254,7 +254,7 @@ def audit_report(root, policy, directory, active_file):
                 'wrong upstream identity audit lock')
     finally:
         expected_lock.unlink(missing_ok=True)
-    require(not npm.get('error') and type(npm.get('auditReportVersion')) is int
+    require('error' not in npm and type(npm.get('auditReportVersion')) is int
             and npm.get('auditReportVersion') == 2,
             'npm audit operational failure or unsupported report')
     totals = npm.get('metadata', {}).get('vulnerabilities', {})
