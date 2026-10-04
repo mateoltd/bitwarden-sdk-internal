@@ -20,6 +20,8 @@ fallible system entropy; without that feature, missing entropy returns `Rng`.
 No failure retries unblinded. Blinding factors, the checked representative and
 the OAEP encoded message receive explicit cleanup. Key, wire, hash, MGF and
 label formats stay compatible. Other padding schemes retain their upstream APIs.
+The generic MGF path now streams the seed and counter into the digest, matching
+the existing typed path, instead of allocating unprotected scratch copies.
 
 The existing complete OAEP validity scan precedes output selection. Successful
 plaintext and its length are authorized outputs. This patch does not make a

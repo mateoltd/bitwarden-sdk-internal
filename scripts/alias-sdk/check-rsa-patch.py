@@ -21,7 +21,7 @@ changed = {
     name for name, digest in source["originalFiles"].items()
     if actual.get(name) != digest
 }
-assert changed == {"Cargo.toml", "Cargo.lock", "src/algorithms/pad.rs", "src/algorithms/rsa.rs", "src/oaep.rs"}
+assert changed == {"Cargo.toml", "Cargo.lock", "src/algorithms/pad.rs", "src/algorithms/rsa.rs", "src/algorithms/mgf.rs", "src/oaep.rs"}
 manifest = tomllib.loads((root / "Cargo.toml").read_text())
 assert manifest["workspace"]["dependencies"]["rsa"]["version"] == "=0.10.0-rc.18"
 assert "getrandom" in manifest["workspace"]["dependencies"]["rsa"]["features"]

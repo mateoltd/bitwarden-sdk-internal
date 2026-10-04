@@ -16,11 +16,10 @@ where
     assert!(out.len() as u64 <= MAX_LEN);
 
     while i < out.len() {
-        let mut digest_input = vec![0u8; seed.len() + 4];
-        digest_input[0..seed.len()].copy_from_slice(seed);
-        digest_input[seed.len()..].copy_from_slice(&counter);
-
-        Digest::update(digest, digest_input.as_slice());
+        // Feed the same concatenation as the established typed MGF path without
+        // allocating an additional copy of the recovered OAEP seed/data block.
+        Digest::update(digest, seed);
+        Digest::update(digest, counter);
         let digest_output = &*digest.finalize_reset();
         let mut j = 0;
         loop {
