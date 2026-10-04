@@ -523,10 +523,11 @@ impl CiphersClient {
 #[cfg(test)]
 mod tests {
     use bitwarden_api_api::{apis::ApiClient, models::CipherResponseModel};
-    use bitwarden_core::key_management::{
-        SymmetricKeySlotId, create_test_crypto_with_user_and_org_key,
+    use bitwarden_core::{
+        Client,
+        client::test_accounts::test_bitwarden_com_account,
+        key_management::{SymmetricKeySlotId, create_test_crypto_with_user_and_org_key},
     };
-    use bitwarden_core::{Client, client::test_accounts::test_bitwarden_com_account};
     use bitwarden_crypto::{
         KeyStore, PrimitiveEncryptable, SymmetricCryptoKey, SymmetricKeyAlgorithm,
     };
