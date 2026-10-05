@@ -18,7 +18,7 @@ require(source['advisory'] == 'RUSTSEC-2023-0071', 'RSA provenance invariant mis
 actual = {file.relative_to(vendor).as_posix(): hashlib.sha256(file.read_bytes()).hexdigest() for file in vendor.rglob('*') if file.is_file() and file.name != 'SOURCE.json'}
 require(actual == source['patchedFiles'], 'RSA candidate file set or checksum mismatch')
 changed = {name for name, digest in source['originalFiles'].items() if actual.get(name) != digest}
-require(changed == {'Cargo.toml', 'Cargo.lock', 'src/algorithms/pad.rs', 'src/algorithms/rsa.rs', 'src/algorithms/mgf.rs', 'src/oaep.rs'}, 'RSA provenance invariant mismatch')
+require(changed == {'Cargo.toml', 'Cargo.lock', 'src/algorithms/pad.rs', 'src/algorithms/rsa.rs', 'src/algorithms/mgf.rs', 'src/key.rs', 'src/oaep.rs'}, 'RSA provenance invariant mismatch')
 manifest = tomllib.loads((root / 'Cargo.toml').read_text())
 require(manifest['workspace']['dependencies']['rsa']['version'] == '=0.10.0-rc.18', 'RSA provenance invariant mismatch')
 require('getrandom' in manifest['workspace']['dependencies']['rsa']['features'], 'RSA provenance invariant mismatch')
@@ -40,7 +40,7 @@ require(bigint_source['advisory'] == 'RUSTSEC-2023-0071', 'Integer provenance in
 bigint_actual = {file.relative_to(bigint).as_posix(): hashlib.sha256(file.read_bytes()).hexdigest() for file in bigint.rglob('*') if file.is_file() and file.name != 'SOURCE.json'}
 require(bigint_actual == bigint_source['patchedFiles'], 'Integer candidate file set or checksum mismatch')
 bigint_changed = {name for name, digest in bigint_source['originalFiles'].items() if bigint_actual.get(name) != digest}
-require(bigint_changed == {'Cargo.toml', 'src/uint/ref_type/div.rs'}, 'Integer patch exceeded its scope')
+require(bigint_changed == {'Cargo.toml', 'src/modular/safegcd/boxed.rs', 'src/uint/boxed/gcd.rs', 'src/uint/ref_type/div.rs'}, 'Integer patch exceeded its scope')
 require(manifest['patch']['crates-io']['crypto-bigint'] == {'path': 'support/vendor/crypto-bigint'}, 'Integer production patch route mismatch')
 require(tomllib.loads((vendor / 'Cargo.toml').read_text())['patch']['crates-io']['crypto-bigint'] == {'path': '../crypto-bigint'}, 'Integer test patch route mismatch')
 for graph in [lock, test_lock]:

@@ -8,7 +8,7 @@ use crypto_bigint::{
     BoxedUint, ConcatenatingMul, Integer, NonZero, Odd, Resize,
 };
 use rand_core::CryptoRng;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 #[cfg(feature = "serde")]
 use {
     pkcs8::{DecodePrivateKey, EncodePrivateKey},
@@ -615,8 +615,15 @@ impl RsaPrivateKey {
     pub fn crt_coefficient(&self) -> Option<BoxedUint> {
         let p = &self.primes[0];
         let q = &self.primes[1];
+        let p_precision = p.bits_precision();
+        let precision = p_precision.max(q.bits_precision());
+        let q = Zeroizing::new(q.resize_unchecked(precision));
         // TODO: maybe store primes as `NonZero`?
-        Option::from(q.invert_mod(&NonZero::new(p.clone()).expect("prime")))
+        let p = NonZero::new(p.resize_unchecked(precision))
+            .map(Zeroizing::new)
+            .expect("prime");
+        let inverse = q.invert_mod(&p).map(Zeroizing::new).into_option()?;
+        (&*inverse).try_resize(p_precision)
     }
 
     /// Performs basic sanity checks on the key.

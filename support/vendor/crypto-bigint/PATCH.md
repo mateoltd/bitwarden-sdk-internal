@@ -17,3 +17,10 @@ Const black_box requires Rust 1.86. The SDK minimum remains Rust 1.88.
 The barrier is not a language-level constant-time guarantee. Qualification
 requires actual optimized-code/access-property evidence for the supported
 compiler and targets, alongside functional regressions and independent review.
+
+The plain non-vartime boxed GCD wrapper now widens a borrowed copy of its
+conditional-assignment operand to the core result's allocated precision. This
+preserves independently sized inputs and zero semantics without changing the
+core algorithm or the equal-width assignment assertion. The new copy has a
+Zeroizing guard when the existing zeroize feature is enabled. Direct mixed-width,
+zero and even-input regressions also protect the unchanged specialized routes.

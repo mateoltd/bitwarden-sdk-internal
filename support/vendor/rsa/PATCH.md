@@ -37,3 +37,10 @@ The associated crypto-bigint 0.7.5 correction-mask candidate is applied to both
 production and standalone tests. Its const compiler barrier requires Rust 1.86;
 the SDK minimum remains Rust 1.88. Each dependency retains original identities,
 licenses and byte-level provenance. No advisory qualification is inferred.
+
+CRT coefficient calculation adapts borrowed prime copies to a common allocated
+precision for the existing inversion, then uses a checked borrowed conversion
+back to the original first-prime precision. Stored prime layouts, key encodings
+and Option behavior remain unchanged. New operands and the inversion payload
+receive Zeroizing ownership before fallible conversion; this does not claim
+cleanup after process abort or global constant-time behavior.

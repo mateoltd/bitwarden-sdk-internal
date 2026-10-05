@@ -42,7 +42,7 @@ impl Gcd<BoxedUint> for Odd<BoxedUint> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BoxedUint, Gcd, Resize};
+    use crate::{BoxedUint, Gcd, NonZero, Odd, Resize};
 
     #[test]
     fn gcd_relatively_prime() {
@@ -105,4 +105,50 @@ mod tests {
         let gcd = f.gcd_vartime(&g);
         assert_eq!(gcd.get(), BoxedUint::from(1763u32));
     }
+
+    macro_rules! gcd_precision_case {
+        (@plain, $f:expr, $g:expr) => { $f.gcd($g) };
+        (@nonzero, $f:expr, $g:expr) => {
+            NonZero::new($f.clone()).unwrap().gcd($g).get()
+        };
+        (@odd, $f:expr, $g:expr) => {
+            Odd::new($f.clone()).unwrap().gcd($g).get()
+        };
+        ($name:ident, $route:ident, $f:expr, $g:expr, $f_bits:expr, $g_bits:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let f = BoxedUint::from($f).resize_unchecked($f_bits);
+                let g = BoxedUint::from($g).resize_unchecked($g_bits);
+                assert_eq!(f.bits_precision(), $f_bits);
+                assert_eq!(g.bits_precision(), $g_bits);
+                let result = gcd_precision_case!(@$route, f, &g);
+                assert_eq!(result, BoxedUint::from($expected));
+                assert_eq!(result.bits_precision(), $f_bits.max($g_bits));
+            }
+        };
+    }
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_wide_first, plain, 4391633u32, 2022161u32, 128u32, 64u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_narrow_first, plain, 4391633u32, 2022161u32, 64u32, 128u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_equal64, plain, 4391633u32, 2022161u32, 64u32, 64u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_equal128, plain, 4391633u32, 2022161u32, 128u32, 128u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_zero_nonzero_wide_first, plain, 0u32, 2022161u32, 128u32, 64u32, 2022161u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_zero_nonzero_narrow_first, plain, 0u32, 2022161u32, 64u32, 128u32, 2022161u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_zero_wide_first, plain, 4391633u32, 0u32, 128u32, 64u32, 4391633u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_zero_narrow_first, plain, 4391633u32, 0u32, 64u32, 128u32, 4391633u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_both_zero_wide_first, plain, 0u32, 0u32, 128u32, 64u32, 0u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_both_zero_narrow_first, plain, 0u32, 0u32, 64u32, 128u32, 0u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_both_zero_equal64, plain, 0u32, 0u32, 64u32, 64u32, 0u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_both_zero_equal128, plain, 0u32, 0u32, 128u32, 128u32, 0u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_zero_nonzero_equal64, plain, 0u32, 2022161u32, 64u32, 64u32, 2022161u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_nonzero_zero_equal64, plain, 4391633u32, 0u32, 64u32, 64u32, 4391633u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_even_wide_first, plain, 8783266u32, 4044322u32, 128u32, 64u32, 3526u32);
+    gcd_precision_case!(gcd_allocated_precision_plain_even_narrow_first, plain, 8783266u32, 4044322u32, 64u32, 128u32, 3526u32);
+    gcd_precision_case!(gcd_allocated_precision_nonzero_even_wide_first, nonzero, 8783266u32, 4044322u32, 128u32, 64u32, 3526u32);
+    gcd_precision_case!(gcd_allocated_precision_nonzero_even_narrow_first, nonzero, 8783266u32, 4044322u32, 64u32, 128u32, 3526u32);
+    gcd_precision_case!(gcd_allocated_precision_nonzero_nonzero_wide_first, nonzero, 4391633u32, 2022161u32, 128u32, 64u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_nonzero_nonzero_narrow_first, nonzero, 4391633u32, 2022161u32, 64u32, 128u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_odd_nonzero_wide_first, odd, 4391633u32, 2022161u32, 128u32, 64u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_odd_nonzero_narrow_first, odd, 4391633u32, 2022161u32, 64u32, 128u32, 1763u32);
+    gcd_precision_case!(gcd_allocated_precision_nonzero_zero_wide_first, nonzero, 4391633u32, 0u32, 128u32, 64u32, 4391633u32);
+    gcd_precision_case!(gcd_allocated_precision_nonzero_zero_narrow_first, nonzero, 4391633u32, 0u32, 64u32, 128u32, 4391633u32);
 }

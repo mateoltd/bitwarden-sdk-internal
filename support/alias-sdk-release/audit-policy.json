@@ -9,14 +9,14 @@
         "originalCommit": "2b54d248cce00457e3afb5650d9b14632ef4a116",
         "originalRegistrySha256": "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271",
         "package": "crypto-bigint",
-        "provenanceSha256": "cf7f95c3fde9ffd4e15b133daa7328ab35e1a7fb62646e2f771795b83827fedc",
+        "provenanceSha256": "8d01c1816405604367d8076eded2ccb5dccbadaec34a3695280cda9ddfb20314",
         "version": "0.7.5"
       },
       "rsa": {
         "originalCommit": "e31a0209de98cce82de44a5efc241912eb38f6ea",
         "originalRegistrySha256": "30b2aa4ba0d89f73d1e332df05be0eeab8840351c36ca5654341dfdb57bb3caf",
         "package": "rsa",
-        "provenanceSha256": "e7a338d0766164287e5e5f2c1c5d1e15ac60ed80365b965c8724d889cdad86cd",
+        "provenanceSha256": "429ed3e9fbf823046035d66dd42e3cd08f5ca19ffa547aeae2aa27f95609c46d",
         "version": "0.10.0-rc.18"
       }
     },
@@ -58,7 +58,7 @@
     "sourceCatalog": {
       "algorithm": "sha256(sorted-sha256-path-lines)",
       "fileCount": 2320,
-      "sha256": "054353d3a19840d733883637d50f3f2d283f3dd2e9738c5bc00c73f51e8cd4f9"
+      "sha256": "80739cfc021b82822cad03fb37c9a47b79a1f88e8553b34fea28b5c65f98b711"
     },
     "privateCallers": {
       "crates/bitwarden-crypto/src/enc_string/asymmetric.rs": "2458b9a452ba5257bee3196c9a2ad46a6d2fc06db2f2558e40e9bc1b01b409f1",

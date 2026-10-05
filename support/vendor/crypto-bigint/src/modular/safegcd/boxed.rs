@@ -10,6 +10,8 @@ use crate::{
     primitives::{u32_max, u32_min},
 };
 use core::fmt;
+#[cfg(feature = "zeroize")]
+use zeroize::Zeroizing;
 
 /// Modular multiplicative inverter based on the Bernstein-Yang method.
 ///
@@ -139,7 +141,11 @@ pub fn gcd<const VARTIME: bool>(f: &BoxedUint, g: &BoxedUint) -> BoxedUint {
         let (f_nz, f_is_nonzero) = f.to_nz_or_one();
         // gcd of (0, g) is g
         let mut r = gcd_nz::<VARTIME>(&f_nz, g).get();
-        r.ct_assign(g, !f_is_nonzero);
+        // Match the core's maximum precision without changing either input.
+        let g = g.resize_unchecked(r.bits_precision());
+        #[cfg(feature = "zeroize")]
+        let g = Zeroizing::new(g);
+        r.ct_assign(&g, !f_is_nonzero);
         r
     }
 }
