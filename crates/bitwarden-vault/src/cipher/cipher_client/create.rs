@@ -183,7 +183,7 @@ impl CiphersClient {
             view.upgrade_to_cipher_key_encryption(&mut key_store.context())?;
         }
 
-        let use_blob = self.should_use_blob_encryption(view.organization_id);
+        let use_blob = self.should_use_blob_encryption_for_view(&view);
 
         create_cipher(
             key_store,
@@ -201,18 +201,22 @@ impl CiphersClient {
 #[cfg(test)]
 mod tests {
     use bitwarden_api_api::{apis::ApiClient, models::CipherResponseModel};
-    use bitwarden_core::key_management::SymmetricKeySlotId;
+    use bitwarden_core::{
+        Client, client::test_accounts::test_bitwarden_com_account,
+        key_management::SymmetricKeySlotId,
+    };
     use bitwarden_crypto::SymmetricKeyAlgorithm;
     use bitwarden_test::MemoryRepository;
     use chrono::Utc;
 
     use super::*;
-    use crate::{CipherId, LoginView};
+    use crate::{CipherId, LoginView, VaultClientExt};
 
     const TEST_CIPHER_ID: &str = "5faa9684-c793-4a2d-8a12-b33900187097";
     const TEST_COLLECTION_ID: &str = "73546b86-8802-4449-ad2a-69ea981b4ffd";
     const TEST_USER_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
     const TEST_ORG_ID: &str = "1bc9ac1e-f5aa-45f2-94bf-b181009709b8";
+    const TEST_ALIAS_REFERENCE: &str = "{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}";
 
     fn generate_test_cipher_create_request() -> CipherCreateRequest {
         CipherCreateRequest {
@@ -221,6 +225,7 @@ mod tests {
             r#type: CipherViewType::Login(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -319,6 +324,7 @@ mod tests {
             Some(LoginView {
                 username: Some("test@example.com".to_string()),
                 password: Some("password123".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -336,6 +342,77 @@ mod tests {
         assert_eq!(stored_cipher_view.r#type, result.r#type);
         assert!(stored_cipher_view.login.is_some());
         assert_eq!(stored_cipher_view.favorite, result.favorite);
+    }
+
+    #[tokio::test]
+    async fn alias_bound_create_uses_opaque_blob_and_restores_binding() {
+        let cipher_id: CipherId = TEST_CIPHER_ID.parse().unwrap();
+        let api_client = ApiClient::new_mocked(move |mock| {
+            mock.ciphers_api
+                .expect_post()
+                .returning(move |body| {
+                    let body = body.unwrap();
+                    assert!(
+                        body.login.is_none(),
+                        "alias metadata must not use legacy fields"
+                    );
+                    let data = body
+                        .data
+                        .expect("alias-bound login must use encrypted data");
+                    assert!(!data.contains("alias@example.test"));
+                    assert!(!data.contains("opaque/id:7"));
+
+                    Ok(CipherResponseModel {
+                        object: Some("cipher".to_string()),
+                        id: Some(cipher_id.into()),
+                        name: body.name,
+                        r#type: body.r#type,
+                        favorite: body.favorite,
+                        reprompt: body.reprompt,
+                        key: body.key,
+                        view_password: Some(true),
+                        edit: Some(true),
+                        organization_use_totp: Some(true),
+                        revision_date: Some("2025-01-01T00:00:00Z".to_string()),
+                        creation_date: Some("2025-01-01T00:00:00Z".to_string()),
+                        data: Some(data),
+                        ..Default::default()
+                    })
+                })
+                .once();
+        });
+
+        let client =
+            Client::init_test_account_with_api_client(test_bitwarden_com_account(), api_client)
+                .await;
+        let ciphers = client.vault().ciphers();
+        let repository = ciphers.get_repository().unwrap();
+        let mut request = generate_test_cipher_create_request();
+        request
+            .r#type
+            .as_login_view_mut()
+            .expect("login request")
+            .username = Some("alias@example.test".to_string());
+        request
+            .r#type
+            .as_login_view_mut()
+            .expect("login request")
+            .alias_reference = Some(TEST_ALIAS_REFERENCE.to_string());
+
+        let result = ciphers.create(request).await.unwrap();
+
+        assert_eq!(
+            result.login.and_then(|login| login.alias_reference),
+            Some(TEST_ALIAS_REFERENCE.to_string())
+        );
+        assert!(
+            repository
+                .get(cipher_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_blob_encrypted()
+        );
     }
 
     #[tokio::test]
@@ -419,6 +496,7 @@ mod tests {
             r#type: CipherViewType::Login(LoginView {
                 username: None,
                 password: None,
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

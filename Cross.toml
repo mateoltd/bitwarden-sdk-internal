@@ -1,0 +1,11 @@
+[target.aarch64-linux-android]
+image = "ghcr.io/cross-rs/aarch64-linux-android@sha256:826fb1048157072f2ad37b500d2d10e2bba86920aec107ff7949a17e8cd99445"
+
+[target.armv7-linux-androideabi]
+image = "ghcr.io/cross-rs/armv7-linux-androideabi@sha256:cd682f72e9b6f6fd2844ee3b729063d193fe0b26b8e60fc7e662aeacf9a9f611"
+
+[target.i686-linux-android]
+image = "ghcr.io/cross-rs/i686-linux-android@sha256:592a450cbd3a302eff29a4c124012b42afc4cd6d22bb036333a74a4578684678"
+
+[target.x86_64-linux-android]
+image = "ghcr.io/cross-rs/x86_64-linux-android@sha256:87b7f623e8007026d42f98f98606bd8054054eccbf406b90f7ec59153c1f1c3c"

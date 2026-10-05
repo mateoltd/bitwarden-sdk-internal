@@ -278,6 +278,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test_username".to_string()),
                 password: Some("test_password".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,
@@ -335,6 +336,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("test_username".to_string()),
                 password: Some("test_password".to_string()),
+                alias_reference: None,
                 password_revision_date: None,
                 uris: None,
                 totp: None,

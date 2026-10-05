@@ -10,14 +10,12 @@ use crate::{
 
 #[allow(missing_docs)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
-pub struct GeneratorClient {
-    client: Client,
-}
+pub struct GeneratorClient;
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl GeneratorClient {
-    fn new(client: Client) -> Self {
-        Self { client }
+    fn new(_client: Client) -> Self {
+        Self
     }
 
     /// Generates a random password.
@@ -91,9 +89,6 @@ impl GeneratorClient {
     /// There are different username generation strategies, which can be customized using the
     /// `input` parameter.
     ///
-    /// Note that most generation strategies will be executed on the client side, but `Forwarded`
-    /// will use third-party services, which may require a specific setup or API key.
-    ///
     /// ```
     /// use bitwarden_core::Client;
     /// use bitwarden_generators::{GeneratorClientsExt, UsernameError, UsernameGeneratorRequest};
@@ -108,8 +103,12 @@ impl GeneratorClient {
     ///     Ok(())
     /// }
     /// ```
+    #[allow(
+        clippy::unused_async,
+        reason = "preserve the async SDK ABI after network forwarding moved to the alias lifecycle"
+    )]
     pub async fn username(&self, input: UsernameGeneratorRequest) -> Result<String, UsernameError> {
-        username(input, self.client.internal.get_http_client()).await
+        username(input)
     }
 }
 

@@ -207,6 +207,7 @@ mod tests {
             login: Some(LoginView {
                 username: Some("testuser@example.com".to_string()),
                 password: Some("p@ssw0rd123".to_string()),
+                alias_reference: Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string()),
                 password_revision_date: Some(Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap()),
                 uris: Some(vec![LoginUriView {
                     uri: Some("https://example.com/login".to_string()),
@@ -240,6 +241,10 @@ mod tests {
                 login_data.username,
                 Some("testuser@example.com".to_string())
             );
+            assert_eq!(
+                login_data.alias_reference,
+                Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string())
+            );
             assert_eq!(login_data.fido2_credentials.len(), 1);
             assert_eq!(login_data.fido2_credentials[0].counter, 42);
             assert!(login_data.fido2_credentials[0].discoverable);
@@ -260,6 +265,10 @@ mod tests {
         let login = restored.login.unwrap();
         assert_eq!(login.username, Some("testuser@example.com".to_string()));
         assert_eq!(login.password, Some("p@ssw0rd123".to_string()));
+        assert_eq!(
+            login.alias_reference,
+            Some("{\"version\":1,\"connectionId\":\"11111111-1111-4111-8111-111111111111\",\"aliasId\":\"opaque/id:7\",\"address\":\"alias@example.test\"}".to_string())
+        );
         assert_eq!(
             login.totp,
             Some("otpauth://totp/test?secret=JBSWY3DPEHPK3PXP".to_string())

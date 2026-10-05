@@ -43,6 +43,8 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           persist-credentials: false
 
       - name: Install rust
@@ -61,16 +63,23 @@ jobs:
       - name: Check cargo-binstall is not configured
         run: ./scripts/check-no-binstall.sh
 
+      - name: Verify OSS artifact dependency boundary
+        run: ./scripts/check-oss-artifact-boundary.sh
+
       - name: Build
         env:
           TARGET: ${{ matrix.settings.target }}
-        run: cargo bin cross build -p bitwarden-uniffi --release --target=${{ matrix.settings.target }}
+        run: |
+          cargo bin cross build -p bitwarden-uniffi --release --target=${{ matrix.settings.target }}
+          git rev-parse HEAD > ./target/${{ matrix.settings.target }}/release/SOURCE_COMMIT
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-${{ matrix.settings.target }}
-          path: ./target/${{ matrix.settings.target }}/release/libbitwarden_uniffi.so
+          path: |
+            ./target/${{ matrix.settings.target }}/release/libbitwarden_uniffi.so
+            ./target/${{ matrix.settings.target }}/release/SOURCE_COMMIT
           if-no-files-found: error
 
   combine:
@@ -124,11 +133,14 @@ jobs:
       - name: Move artifacts
         working-directory: crates/bitwarden-uniffi/kotlin/sdk/src/main/jniLibs
         run: |
+          for target in armv7-linux-androideabi aarch64-linux-android i686-linux-android x86_64-linux-android; do
+            test "$(cat "$GITHUB_WORKSPACE/android-$target/SOURCE_COMMIT")" = "$(git rev-parse HEAD)"
+          done
           mkdir armeabi-v7a arm64-v8a x86 x86_64
-          mv /home/runner/work/sdk-internal/sdk-internal/android-armv7-linux-androideabi/libbitwarden_uniffi.so ./armeabi-v7a/libbitwarden_uniffi.so
-          mv /home/runner/work/sdk-internal/sdk-internal/android-aarch64-linux-android/libbitwarden_uniffi.so ./arm64-v8a/libbitwarden_uniffi.so
-          mv /home/runner/work/sdk-internal/sdk-internal/android-i686-linux-android/libbitwarden_uniffi.so ./x86/libbitwarden_uniffi.so
-          mv /home/runner/work/sdk-internal/sdk-internal/android-x86_64-linux-android/libbitwarden_uniffi.so ./x86_64/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-armv7-linux-androideabi/libbitwarden_uniffi.so" ./armeabi-v7a/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-aarch64-linux-android/libbitwarden_uniffi.so" ./arm64-v8a/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-i686-linux-android/libbitwarden_uniffi.so" ./x86/libbitwarden_uniffi.so
+          mv "$GITHUB_WORKSPACE/android-x86_64-linux-android/libbitwarden_uniffi.so" ./x86_64/libbitwarden_uniffi.so
 
       - name: Generate bindings
         working-directory: crates/bitwarden-uniffi/kotlin
@@ -142,16 +154,46 @@ jobs:
         run: |
           ./gradlew build --warning-mode all --stacktrace
 
+      - name: Verify OSS Android package contents
+        run: |
+          ./scripts/check-oss-artifact-boundary.sh \
+            --kotlin crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar
+
       - name: Publish
+        if: github.repository_owner == 'bitwarden'
         id: publish
         run: ./gradlew sdk:publish
         working-directory: crates/bitwarden-uniffi/kotlin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compile existing alias AAR consumer
+        if: github.repository_owner != 'bitwarden' && github.event_name == 'pull_request'
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)"
+          scripts/alias-sdk/test-consumer.sh android crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar
+
+      - name: Package nonpublishing fork AAR
+        if: github.repository_owner != 'bitwarden'
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          mkdir "$RUNNER_TEMP/fork-sdk-android"
+          cp crates/bitwarden-uniffi/kotlin/sdk/build/outputs/aar/sdk-release.aar "$RUNNER_TEMP/fork-sdk-android/sdk.aar"
+          python3 scripts/alias-sdk/regression-artifact.py create android "$RUNNER_TEMP/fork-sdk-android" "$SOURCE_COMMIT"
+
+      - name: Deliver checksummed fork AAR
+        if: github.repository_owner != 'bitwarden'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fork-sdk-android-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/fork-sdk-android
+          if-no-files-found: error
+
   check-android-breaking-changes:
     name: Check for Android breaking changes
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.repository_owner == 'bitwarden' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     needs: combine
     permissions:
       contents: read
@@ -175,7 +217,7 @@ jobs:
   update:
     name: Trigger SDK update in Android repo
     runs-on: ubuntu-24.04
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || inputs.update-android-repo
+    if: github.repository_owner == 'bitwarden' && ((github.ref == 'refs/heads/main' && github.event_name == 'push') || inputs.update-android-repo)
     needs: combine
     permissions:
       id-token: write

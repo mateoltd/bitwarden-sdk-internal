@@ -113,6 +113,28 @@ jobs:
       - name: Build
         run: ./build.sh -r ${{ matrix.license_type.build_flags }}
 
+      - name: Package checksummed OSS regression build
+        if: github.repository_owner != 'bitwarden' && github.event_name == 'pull_request' && matrix.license_type.artifact_name == 'sdk-internal'
+        working-directory: .
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          scripts/check-oss-artifact-boundary.sh --wasm "$GITHUB_WORKSPACE/crates/bitwarden-wasm-internal/npm"
+          mkdir "$RUNNER_TEMP/fork-sdk-oss"
+          (cd crates/bitwarden-wasm-internal/npm && npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/fork-sdk-oss")
+          mv "$RUNNER_TEMP/fork-sdk-oss/"*.tgz "$RUNNER_TEMP/fork-sdk-oss/sdk.tgz"
+          scripts/alias-sdk/normalize-archive.sh tar-gz "$RUNNER_TEMP/fork-sdk-oss/sdk.tgz"
+          python3 scripts/alias-sdk/regression-artifact.py create typescript "$RUNNER_TEMP/fork-sdk-oss" "$SOURCE_COMMIT"
+
+      - name: Deliver OSS regression build
+        if: github.repository_owner != 'bitwarden' && github.event_name == 'pull_request' && matrix.license_type.artifact_name == 'sdk-internal'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fork-sdk-oss-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/fork-sdk-oss
+          if-no-files-found: error
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -164,7 +186,7 @@ jobs:
 
   trigger-wasm-publish:
     name: Trigger WASM publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository_owner == 'bitwarden' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     needs: build
     permissions:
@@ -182,8 +204,9 @@ jobs:
   trigger-breaking-change-check:
     name: Trigger client breaking change checks
     if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      github.event_name == 'pull_request_target'
+      github.repository_owner == 'bitwarden' &&
+      ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'pull_request_target')
     needs: build
     permissions:
       contents: read
@@ -203,3 +226,45 @@ jobs:
       client_label: "typescript"
       client_workflow: "sdk-breaking-change-check.yml"
       artifact_identifier: "sdk-internal"
+
+  fork-client-compatibility:
+    name: Pinned public fork client compilation
+    if: github.repository_owner != 'bitwarden' && github.event_name == 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout exact SDK source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: false
+
+      - name: Setup consumer Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.17.0"
+
+      - name: Setup consumer npm
+        run: npm install --global npm@11.18.0
+
+      - name: Test malformed regression deliveries
+        run: python3 -m unittest discover -s scripts/alias-sdk -p 'test_regression_artifact.py'
+
+      - name: Download this run's OSS build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fork-sdk-oss-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/fork-sdk-oss
+
+      - name: Compile pinned OSS public client against verified SDK bytes
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: scripts/alias-sdk/test-fork-clients.sh "$RUNNER_TEMP/fork-sdk-oss" "$SOURCE_COMMIT"
